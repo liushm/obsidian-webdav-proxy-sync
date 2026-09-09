@@ -32,6 +32,7 @@ interface PluginData {
   requestTimeoutSeconds: number;
   excludes: string;
   logs: string[];
+  syncStateVersion: number;
   syncState: Record<string, SyncEntry>;
 }
 
@@ -61,6 +62,7 @@ const DEFAULT_DATA: PluginData = {
   requestTimeoutSeconds: 60,
   excludes: ".obsidian/**\n.trash/**\n**/.DS_Store\n**/Thumbs.db",
   logs: [],
+  syncStateVersion: 2,
   syncState: {},
 };
 
@@ -100,12 +102,17 @@ class WebDavClient {
     }
   }
 
-  async download(path: string): Promise<ArrayBuffer> {
+  async download(path: string): Promise<{ data: ArrayBuffer; item: DavItem }> {
     const response = await this.request("GET", path);
-    return response.body.buffer.slice(
+    const data = response.body.buffer.slice(
       response.body.byteOffset,
       response.body.byteOffset + response.body.byteLength,
     ) as ArrayBuffer;
+    // Some WebDAV backends refresh the file timestamp/ETag after a GET. Store the
+    // post-download metadata, otherwise the next sync sees a false remote change.
+    const item = await this.stat(path);
+    if (!item) throw new Error(`下载后无法读取远程文件信息：${path}`);
+    return { data, item };
   }
 
   async upload(path: string, data: ArrayBuffer): Promise<DavItem> {
@@ -130,7 +137,21 @@ class WebDavClient {
         await this.request("MKCOL", partial);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (!message.includes("HTTP 405") && !message.includes("HTTP 301")) throw error;
+        if (message.includes("HTTP 301")) continue;
+        if (!message.includes("HTTP 405")) throw error;
+        // 405 usually means the collection already exists. Some OpenList-backed
+        // storages expose a newly-created directory after a short delay.
+        if (!partial) continue;
+        let available = false;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const item = await this.stat(partial);
+          if (item?.isDirectory) {
+            available = true;
+            break;
+          }
+          await sleep(400 * (attempt + 1));
+        }
+        if (!available) throw new Error(`无法创建或访问远程目录：${partial}；${message}`);
       }
     }
   }
@@ -271,13 +292,16 @@ export default class WebDavProxySyncPlugin extends Plugin {
   private intervalId: number | null = null;
   private syncing = false;
   private statusBar: HTMLElement | null = null;
+  private needsStateMigration = false;
 
   async onload(): Promise<void> {
     const loaded = (await this.loadData()) as Partial<PluginData> | null;
+    this.needsStateMigration = (loaded?.syncStateVersion ?? 1) < 2;
     this.data = {
       ...DEFAULT_DATA,
       ...(loaded ?? {}),
       logs: loaded?.logs ?? [],
+      syncStateVersion: loaded?.syncStateVersion ?? 1,
       syncState: loaded?.syncState ?? {},
     };
 
@@ -381,7 +405,7 @@ export default class WebDavProxySyncPlugin extends Plugin {
           this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 上传 ${shortPath(path)}`);
           const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
           const current = this.app.vault.getAbstractFileByPath(path);
-          if (current instanceof TFile) this.setState(path, current, uploadedItem);
+          if (current instanceof TFile) await this.setState(path, current, uploadedItem);
           uploaded++;
           this.addLog("INFO", `上传：${path}`);
           continue;
@@ -389,8 +413,9 @@ export default class WebDavProxySyncPlugin extends Plugin {
 
         if (!localFile && remoteItem) {
           this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 下载 ${shortPath(path)}`);
-          const created = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
-          this.setState(path, created, remoteItem);
+          const downloadedFile = await client.download(path);
+          const created = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
+          await this.setState(path, created, downloadedFile.item);
           downloaded++;
           this.addLog("INFO", `下载：${path}`);
           continue;
@@ -401,22 +426,32 @@ export default class WebDavProxySyncPlugin extends Plugin {
         const remoteSig = signatureRemote(remoteItem);
 
         if (!previous) {
-          if (localFile.stat.size === remoteItem.size && Math.abs(localFile.stat.mtime - remoteItem.modified) < 2000) {
-            this.setState(path, localFile, remoteItem);
+          if (localFile.stat.size === remoteItem.size) {
+            await this.setState(path, localFile, remoteItem);
+            this.addLog("INFO", `建立基线（大小一致，无需传输）：${path}`);
           } else if (localFile.stat.mtime >= remoteItem.modified) {
             this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 上传 ${shortPath(path)}`);
             const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
             const current = this.app.vault.getAbstractFileByPath(path);
-            if (current instanceof TFile) this.setState(path, current, uploadedItem);
+            if (current instanceof TFile) await this.setState(path, current, uploadedItem);
             uploaded++;
             this.addLog("INFO", `上传：${path}`);
           } else {
             this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 下载 ${shortPath(path)}`);
-            const updated = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
-            this.setState(path, updated, remoteItem);
+            const downloadedFile = await client.download(path);
+            const updated = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
+            await this.setState(path, updated, downloadedFile.item);
             downloaded++;
             this.addLog("INFO", `下载：${path}`);
           }
+          continue;
+        }
+
+        // Version 0.1/0.2 stored pre-GET ETags. OpenList may update the ETag
+        // after a download, causing unchanged files to be downloaded again.
+        // Re-baseline existing same-size pairs once when upgrading to state v2.
+        if (this.needsStateMigration && localFile.stat.size === remoteItem.size) {
+          await this.setState(path, localFile, remoteItem);
           continue;
         }
 
@@ -427,21 +462,23 @@ export default class WebDavProxySyncPlugin extends Plugin {
         if (localChanged && remoteChanged) {
           this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 处理冲突 ${shortPath(path)}`);
           await this.createConflictCopy(localFile);
-          const updated = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
-          this.setState(path, updated, remoteItem);
+          const downloadedFile = await client.download(path);
+          const updated = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
+          await this.setState(path, updated, downloadedFile.item);
           conflicts++;
           this.addLog("WARN", `双向冲突，已保留本地副本：${path}`);
         } else if (localChanged) {
           this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 上传 ${shortPath(path)}`);
           const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
           const current = this.app.vault.getAbstractFileByPath(path);
-          if (current instanceof TFile) this.setState(path, current, uploadedItem);
+          if (current instanceof TFile) await this.setState(path, current, uploadedItem);
           uploaded++;
           this.addLog("INFO", `上传：${path}`);
         } else {
           this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 下载 ${shortPath(path)}`);
-          const updated = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
-          this.setState(path, updated, remoteItem);
+          const downloadedFile = await client.download(path);
+          const updated = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
+          await this.setState(path, updated, downloadedFile.item);
           downloaded++;
           this.addLog("INFO", `下载：${path}`);
         }
@@ -449,6 +486,8 @@ export default class WebDavProxySyncPlugin extends Plugin {
 
       const summary = `上传 ${uploaded}，下载 ${downloaded}，冲突 ${conflicts}`;
       this.addLog("INFO", `同步完成：${summary}`);
+      this.data.syncStateVersion = 2;
+      this.needsStateMigration = false;
       await this.saveData(this.data);
       this.setStatus(`WebDAV：${summary}`);
       if (showNotice || uploaded + downloaded + conflicts > 0) new Notice(`WebDAV 同步完成：${summary}`);
@@ -502,9 +541,10 @@ export default class WebDavProxySyncPlugin extends Plugin {
     await this.app.vault.createBinary(conflictPath, await this.app.vault.readBinary(file));
   }
 
-  private setState(path: string, local: TFile, remote: DavItem): void {
+  private async setState(path: string, local: TFile, remote: DavItem): Promise<void> {
+    const stat = await this.app.vault.adapter.stat(path);
     this.data.syncState[path] = {
-      localSig: signatureLocal(local),
+      localSig: stat ? `${stat.size}:${stat.mtime}` : signatureLocal(local),
       remoteSig: signatureRemote(remote),
     };
   }
@@ -725,6 +765,10 @@ function globMatches(path: string, pattern: string): boolean {
     .replace(/\?/g, "[^/]")
     .replace(/\u0000/g, ".*");
   return new RegExp(`^${escaped}$`).test(path);
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 function shortPath(path: string): string {

@@ -5853,6 +5853,7 @@ var DEFAULT_DATA = {
   requestTimeoutSeconds: 60,
   excludes: ".obsidian/**\n.trash/**\n**/.DS_Store\n**/Thumbs.db",
   logs: [],
+  syncStateVersion: 2,
   syncState: {}
 };
 var WebDavClient = class {
@@ -5886,10 +5887,13 @@ var WebDavClient = class {
   }
   async download(path) {
     const response = await this.request("GET", path);
-    return response.body.buffer.slice(
+    const data = response.body.buffer.slice(
       response.body.byteOffset,
       response.body.byteOffset + response.body.byteLength
     );
+    const item = await this.stat(path);
+    if (!item) throw new Error(`\u4E0B\u8F7D\u540E\u65E0\u6CD5\u8BFB\u53D6\u8FDC\u7A0B\u6587\u4EF6\u4FE1\u606F\uFF1A${path}`);
+    return { data, item };
   }
   async upload(path, data) {
     const normalized = cleanPath(path);
@@ -5912,7 +5916,19 @@ var WebDavClient = class {
         await this.request("MKCOL", partial);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (!message.includes("HTTP 405") && !message.includes("HTTP 301")) throw error;
+        if (message.includes("HTTP 301")) continue;
+        if (!message.includes("HTTP 405")) throw error;
+        if (!partial) continue;
+        let available = false;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const item = await this.stat(partial);
+          if (item?.isDirectory) {
+            available = true;
+            break;
+          }
+          await sleep(400 * (attempt + 1));
+        }
+        if (!available) throw new Error(`\u65E0\u6CD5\u521B\u5EFA\u6216\u8BBF\u95EE\u8FDC\u7A0B\u76EE\u5F55\uFF1A${partial}\uFF1B${message}`);
       }
     }
   }
@@ -6035,13 +6051,16 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
     this.intervalId = null;
     this.syncing = false;
     this.statusBar = null;
+    this.needsStateMigration = false;
   }
   async onload() {
     const loaded = await this.loadData();
+    this.needsStateMigration = (loaded?.syncStateVersion ?? 1) < 2;
     this.data = {
       ...DEFAULT_DATA,
       ...loaded ?? {},
       logs: loaded?.logs ?? [],
+      syncStateVersion: loaded?.syncStateVersion ?? 1,
       syncState: loaded?.syncState ?? {}
     };
     this.addRibbonIcon("refresh-cw", "WebDAV \u4EE3\u7406\u540C\u6B65", () => void this.runSync(true));
@@ -6135,15 +6154,16 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
           this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0A\u4F20 ${shortPath(path)}`);
           const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
           const current = this.app.vault.getAbstractFileByPath(path);
-          if (current instanceof import_obsidian.TFile) this.setState(path, current, uploadedItem);
+          if (current instanceof import_obsidian.TFile) await this.setState(path, current, uploadedItem);
           uploaded++;
           this.addLog("INFO", `\u4E0A\u4F20\uFF1A${path}`);
           continue;
         }
         if (!localFile && remoteItem) {
           this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0B\u8F7D ${shortPath(path)}`);
-          const created = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
-          this.setState(path, created, remoteItem);
+          const downloadedFile = await client.download(path);
+          const created = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
+          await this.setState(path, created, downloadedFile.item);
           downloaded++;
           this.addLog("INFO", `\u4E0B\u8F7D\uFF1A${path}`);
           continue;
@@ -6152,22 +6172,28 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
         const localSig = signatureLocal(localFile);
         const remoteSig = signatureRemote(remoteItem);
         if (!previous) {
-          if (localFile.stat.size === remoteItem.size && Math.abs(localFile.stat.mtime - remoteItem.modified) < 2e3) {
-            this.setState(path, localFile, remoteItem);
+          if (localFile.stat.size === remoteItem.size) {
+            await this.setState(path, localFile, remoteItem);
+            this.addLog("INFO", `\u5EFA\u7ACB\u57FA\u7EBF\uFF08\u5927\u5C0F\u4E00\u81F4\uFF0C\u65E0\u9700\u4F20\u8F93\uFF09\uFF1A${path}`);
           } else if (localFile.stat.mtime >= remoteItem.modified) {
             this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0A\u4F20 ${shortPath(path)}`);
             const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
             const current = this.app.vault.getAbstractFileByPath(path);
-            if (current instanceof import_obsidian.TFile) this.setState(path, current, uploadedItem);
+            if (current instanceof import_obsidian.TFile) await this.setState(path, current, uploadedItem);
             uploaded++;
             this.addLog("INFO", `\u4E0A\u4F20\uFF1A${path}`);
           } else {
             this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0B\u8F7D ${shortPath(path)}`);
-            const updated = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
-            this.setState(path, updated, remoteItem);
+            const downloadedFile = await client.download(path);
+            const updated = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
+            await this.setState(path, updated, downloadedFile.item);
             downloaded++;
             this.addLog("INFO", `\u4E0B\u8F7D\uFF1A${path}`);
           }
+          continue;
+        }
+        if (this.needsStateMigration && localFile.stat.size === remoteItem.size) {
+          await this.setState(path, localFile, remoteItem);
           continue;
         }
         const localChanged = previous.localSig !== localSig;
@@ -6176,27 +6202,31 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
         if (localChanged && remoteChanged) {
           this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u5904\u7406\u51B2\u7A81 ${shortPath(path)}`);
           await this.createConflictCopy(localFile);
-          const updated = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
-          this.setState(path, updated, remoteItem);
+          const downloadedFile = await client.download(path);
+          const updated = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
+          await this.setState(path, updated, downloadedFile.item);
           conflicts++;
           this.addLog("WARN", `\u53CC\u5411\u51B2\u7A81\uFF0C\u5DF2\u4FDD\u7559\u672C\u5730\u526F\u672C\uFF1A${path}`);
         } else if (localChanged) {
           this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0A\u4F20 ${shortPath(path)}`);
           const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
           const current = this.app.vault.getAbstractFileByPath(path);
-          if (current instanceof import_obsidian.TFile) this.setState(path, current, uploadedItem);
+          if (current instanceof import_obsidian.TFile) await this.setState(path, current, uploadedItem);
           uploaded++;
           this.addLog("INFO", `\u4E0A\u4F20\uFF1A${path}`);
         } else {
           this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0B\u8F7D ${shortPath(path)}`);
-          const updated = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
-          this.setState(path, updated, remoteItem);
+          const downloadedFile = await client.download(path);
+          const updated = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
+          await this.setState(path, updated, downloadedFile.item);
           downloaded++;
           this.addLog("INFO", `\u4E0B\u8F7D\uFF1A${path}`);
         }
       }
       const summary = `\u4E0A\u4F20 ${uploaded}\uFF0C\u4E0B\u8F7D ${downloaded}\uFF0C\u51B2\u7A81 ${conflicts}`;
       this.addLog("INFO", `\u540C\u6B65\u5B8C\u6210\uFF1A${summary}`);
+      this.data.syncStateVersion = 2;
+      this.needsStateMigration = false;
       await this.saveData(this.data);
       this.setStatus(`WebDAV\uFF1A${summary}`);
       if (showNotice || uploaded + downloaded + conflicts > 0) new import_obsidian.Notice(`WebDAV \u540C\u6B65\u5B8C\u6210\uFF1A${summary}`);
@@ -6246,9 +6276,10 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
     await this.ensureLocalParent(conflictPath);
     await this.app.vault.createBinary(conflictPath, await this.app.vault.readBinary(file));
   }
-  setState(path, local, remote) {
+  async setState(path, local, remote) {
+    const stat = await this.app.vault.adapter.stat(path);
     this.data.syncState[path] = {
-      localSig: signatureLocal(local),
+      localSig: stat ? `${stat.size}:${stat.mtime}` : signatureLocal(local),
       remoteSig: signatureRemote(remote)
     };
   }
@@ -6395,6 +6426,9 @@ function signatureRemote(item) {
 function globMatches(path, pattern) {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, ".*");
   return new RegExp(`^${escaped}$`).test(path);
+}
+function sleep(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 function shortPath(path) {
   return path.length > 48 ? `\u2026${path.slice(-47)}` : path;
