@@ -1,6 +1,7 @@
 import {
   App,
   Notice,
+  Modal,
   Plugin,
   PluginSettingTab,
   Setting,
@@ -28,7 +29,9 @@ interface PluginData {
   rejectUnauthorized: boolean;
   syncIntervalMinutes: number;
   syncOnStartup: boolean;
+  requestTimeoutSeconds: number;
   excludes: string;
+  logs: string[];
   syncState: Record<string, SyncEntry>;
 }
 
@@ -55,7 +58,9 @@ const DEFAULT_DATA: PluginData = {
   rejectUnauthorized: true,
   syncIntervalMinutes: 10,
   syncOnStartup: false,
+  requestTimeoutSeconds: 60,
   excludes: ".obsidian/**\n.trash/**\n**/.DS_Store\n**/Thumbs.db",
+  logs: [],
   syncState: {},
 };
 
@@ -228,7 +233,7 @@ class WebDavClient {
           method,
           headers,
           agent: this.makeAgent(target),
-          timeout: 30_000,
+          timeout: Math.max(5, this.settings.requestTimeoutSeconds) * 1000,
           rejectUnauthorized: this.settings.rejectUnauthorized,
         },
         (response) => {
@@ -269,7 +274,12 @@ export default class WebDavProxySyncPlugin extends Plugin {
 
   async onload(): Promise<void> {
     const loaded = (await this.loadData()) as Partial<PluginData> | null;
-    this.data = { ...DEFAULT_DATA, ...(loaded ?? {}), syncState: loaded?.syncState ?? {} };
+    this.data = {
+      ...DEFAULT_DATA,
+      ...(loaded ?? {}),
+      logs: loaded?.logs ?? [],
+      syncState: loaded?.syncState ?? {},
+    };
 
     this.addRibbonIcon("refresh-cw", "WebDAV 代理同步", () => void this.runSync(true));
     this.addCommand({
@@ -282,7 +292,13 @@ export default class WebDavProxySyncPlugin extends Plugin {
       name: "测试 WebDAV 连接",
       callback: () => void this.testConnection(),
     });
+    this.addCommand({
+      id: "show-sync-log",
+      name: "查看同步日志",
+      callback: () => this.showLogs(),
+    });
     this.statusBar = this.addStatusBarItem();
+    this.statusBar.onclick = () => this.showLogs();
     this.setStatus("WebDAV：待机");
     this.addSettingTab(new WebDavProxySyncSettingTab(this.app, this));
     this.configureInterval();
@@ -304,13 +320,18 @@ export default class WebDavProxySyncPlugin extends Plugin {
   async testConnection(): Promise<void> {
     try {
       this.setStatus("WebDAV：正在测试…");
+      this.addLog("INFO", "开始测试 WebDAV 连接");
       await new WebDavClient(this.data).test();
+      this.addLog("INFO", "WebDAV 连接测试成功");
+      await this.saveData(this.data);
       new Notice("WebDAV 连接成功");
       this.setStatus("WebDAV：连接正常");
     } catch (error) {
       const message = errorMessage(error);
-      new Notice(`WebDAV 连接失败：${message}`, 10_000);
-      this.setStatus("WebDAV：连接失败");
+      this.addLog("ERROR", `连接测试失败：${message}${errorStack(error)}`);
+      await this.saveData(this.data);
+      new Notice(`WebDAV 连接失败：${message}。可在命令面板中打开“查看同步日志”。`, 10_000);
+      this.setStatus(`WebDAV：连接失败 · ${message}`);
       console.error("WebDAV connection test failed", error);
     }
   }
@@ -326,10 +347,12 @@ export default class WebDavProxySyncPlugin extends Plugin {
     }
 
     this.syncing = true;
-    this.setStatus("WebDAV：同步中…");
+    this.setStatus("WebDAV：正在读取远程文件列表…");
+    this.addLog("INFO", "开始同步");
     let uploaded = 0;
     let downloaded = 0;
     let conflicts = 0;
+    let currentPath = "";
 
     try {
       const client = new WebDavClient(this.data);
@@ -343,23 +366,33 @@ export default class WebDavProxySyncPlugin extends Plugin {
       }
 
       const paths = new Set([...local.keys(), ...remote.keys()]);
-      for (const path of Array.from(paths).sort()) {
+      const sortedPaths = Array.from(paths).sort();
+      this.addLog("INFO", `扫描完成：本地 ${local.size} 个文件，远程 ${remote.size} 个文件，共需比较 ${sortedPaths.length} 个路径`);
+      let processed = 0;
+      for (const path of sortedPaths) {
+        currentPath = path;
+        processed++;
+        this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 检查 ${shortPath(path)}`);
         const localFile = local.get(path);
         const remoteItem = remote.get(path);
         const previous = this.data.syncState[path];
 
         if (localFile && !remoteItem) {
+          this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 上传 ${shortPath(path)}`);
           const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
           const current = this.app.vault.getAbstractFileByPath(path);
           if (current instanceof TFile) this.setState(path, current, uploadedItem);
           uploaded++;
+          this.addLog("INFO", `上传：${path}`);
           continue;
         }
 
         if (!localFile && remoteItem) {
+          this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 下载 ${shortPath(path)}`);
           const created = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
           this.setState(path, created, remoteItem);
           downloaded++;
+          this.addLog("INFO", `下载：${path}`);
           continue;
         }
 
@@ -371,14 +404,18 @@ export default class WebDavProxySyncPlugin extends Plugin {
           if (localFile.stat.size === remoteItem.size && Math.abs(localFile.stat.mtime - remoteItem.modified) < 2000) {
             this.setState(path, localFile, remoteItem);
           } else if (localFile.stat.mtime >= remoteItem.modified) {
+            this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 上传 ${shortPath(path)}`);
             const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
             const current = this.app.vault.getAbstractFileByPath(path);
             if (current instanceof TFile) this.setState(path, current, uploadedItem);
             uploaded++;
+            this.addLog("INFO", `上传：${path}`);
           } else {
+            this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 下载 ${shortPath(path)}`);
             const updated = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
             this.setState(path, updated, remoteItem);
             downloaded++;
+            this.addLog("INFO", `下载：${path}`);
           }
           continue;
         }
@@ -388,30 +425,40 @@ export default class WebDavProxySyncPlugin extends Plugin {
         if (!localChanged && !remoteChanged) continue;
 
         if (localChanged && remoteChanged) {
+          this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 处理冲突 ${shortPath(path)}`);
           await this.createConflictCopy(localFile);
           const updated = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
           this.setState(path, updated, remoteItem);
           conflicts++;
+          this.addLog("WARN", `双向冲突，已保留本地副本：${path}`);
         } else if (localChanged) {
+          this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 上传 ${shortPath(path)}`);
           const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
           const current = this.app.vault.getAbstractFileByPath(path);
           if (current instanceof TFile) this.setState(path, current, uploadedItem);
           uploaded++;
+          this.addLog("INFO", `上传：${path}`);
         } else {
+          this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 下载 ${shortPath(path)}`);
           const updated = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
           this.setState(path, updated, remoteItem);
           downloaded++;
+          this.addLog("INFO", `下载：${path}`);
         }
       }
 
-      await this.saveData(this.data);
       const summary = `上传 ${uploaded}，下载 ${downloaded}，冲突 ${conflicts}`;
+      this.addLog("INFO", `同步完成：${summary}`);
+      await this.saveData(this.data);
       this.setStatus(`WebDAV：${summary}`);
       if (showNotice || uploaded + downloaded + conflicts > 0) new Notice(`WebDAV 同步完成：${summary}`);
     } catch (error) {
       const message = errorMessage(error);
-      this.setStatus("WebDAV：同步失败");
-      new Notice(`WebDAV 同步失败：${message}`, 10_000);
+      const location = currentPath ? `，处理文件：${currentPath}` : "";
+      this.addLog("ERROR", `同步失败${location}：${message}${errorStack(error)}`);
+      await this.saveData(this.data);
+      this.setStatus(`WebDAV：同步失败 · ${message}`);
+      new Notice(`WebDAV 同步失败：${message}${location}。可打开“查看同步日志”查看详情。`, 12_000);
       console.error("WebDAV sync failed", error);
     } finally {
       this.syncing = false;
@@ -478,8 +525,59 @@ export default class WebDavProxySyncPlugin extends Plugin {
     }
   }
 
+  showLogs(): void {
+    new SyncLogModal(this.app, this).open();
+  }
+
+  async clearLogs(): Promise<void> {
+    this.data.logs = [];
+    await this.saveData(this.data);
+  }
+
+  private addLog(level: "INFO" | "WARN" | "ERROR", message: string): void {
+    const line = `${new Date().toLocaleString()} [${level}] ${message}`;
+    this.data.logs.push(line);
+    if (this.data.logs.length > 300) this.data.logs.splice(0, this.data.logs.length - 300);
+    if (level === "ERROR") console.error(line);
+    else if (level === "WARN") console.warn(line);
+    else console.info(line);
+  }
+
   private setStatus(text: string): void {
-    if (this.statusBar) this.statusBar.setText(text);
+    if (this.statusBar) {
+      this.statusBar.setText(text);
+      this.statusBar.setAttr("title", text);
+    }
+  }
+}
+
+class SyncLogModal extends Modal {
+  constructor(app: App, private readonly plugin: WebDavProxySyncPlugin) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "WebDAV 同步日志" });
+    const toolbar = contentEl.createDiv({ cls: "webdav-proxy-sync-log-toolbar" });
+    const copyButton = toolbar.createEl("button", { text: "复制日志" });
+    copyButton.onclick = () => {
+      void navigator.clipboard.writeText(this.plugin.data.logs.join("\n"));
+      new Notice("同步日志已复制");
+    };
+    const clearButton = toolbar.createEl("button", { text: "清空日志" });
+    clearButton.onclick = async () => {
+      await this.plugin.clearLogs();
+      this.onOpen();
+    };
+    const log = contentEl.createEl("pre", { cls: "webdav-proxy-sync-log" });
+    log.setText(this.plugin.data.logs.length ? this.plugin.data.logs.join("\n") : "暂无同步日志");
+    log.scrollTop = log.scrollHeight;
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
   }
 }
 
@@ -544,6 +642,17 @@ class WebDavProxySyncSettingTab extends PluginSettingTab {
         .onChange(async (value) => { this.plugin.data.rejectUnauthorized = value; await this.plugin.saveSettings(); }));
 
     new Setting(containerEl)
+      .setName("网络超时（秒）")
+      .setDesc("网络或代理较慢时可适当增大，例如 120 秒")
+      .addText((text) => text
+        .setValue(String(this.plugin.data.requestTimeoutSeconds))
+        .onChange(async (value) => {
+          const parsed = Number.parseInt(value, 10);
+          this.plugin.data.requestTimeoutSeconds = Number.isFinite(parsed) && parsed >= 5 ? parsed : 60;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
       .setName("自动同步间隔（分钟）")
       .setDesc("设为 0 可关闭定时同步")
       .addText((text) => text
@@ -574,6 +683,13 @@ class WebDavProxySyncSettingTab extends PluginSettingTab {
       .addButton((button) => button
         .setButtonText("测试连接")
         .onClick(() => void this.plugin.testConnection()));
+
+    new Setting(containerEl)
+      .setName("同步日志")
+      .setDesc("查看每次同步的扫描数量、文件操作、失败位置和错误堆栈")
+      .addButton((button) => button
+        .setButtonText("查看日志")
+        .onClick(() => this.plugin.showLogs()));
 
     new Setting(containerEl)
       .setName("立即同步")
@@ -611,6 +727,16 @@ function globMatches(path: string, pattern: string): boolean {
   return new RegExp(`^${escaped}$`).test(path);
 }
 
+function shortPath(path: string): string {
+  return path.length > 48 ? `…${path.slice(-47)}` : path;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function errorStack(error: unknown): string {
+  if (!(error instanceof Error) || !error.stack) return "";
+  const stack = error.stack.split("\n").slice(1, 8).join(" | ");
+  return stack ? ` | ${stack.trim()}` : "";
 }

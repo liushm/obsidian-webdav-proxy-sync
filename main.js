@@ -5850,7 +5850,9 @@ var DEFAULT_DATA = {
   rejectUnauthorized: true,
   syncIntervalMinutes: 10,
   syncOnStartup: false,
+  requestTimeoutSeconds: 60,
   excludes: ".obsidian/**\n.trash/**\n**/.DS_Store\n**/Thumbs.db",
+  logs: [],
   syncState: {}
 };
 var WebDavClient = class {
@@ -5998,7 +6000,7 @@ var WebDavClient = class {
           method,
           headers,
           agent: this.makeAgent(target),
-          timeout: 3e4,
+          timeout: Math.max(5, this.settings.requestTimeoutSeconds) * 1e3,
           rejectUnauthorized: this.settings.rejectUnauthorized
         },
         (response) => {
@@ -6036,7 +6038,12 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
   }
   async onload() {
     const loaded = await this.loadData();
-    this.data = { ...DEFAULT_DATA, ...loaded ?? {}, syncState: loaded?.syncState ?? {} };
+    this.data = {
+      ...DEFAULT_DATA,
+      ...loaded ?? {},
+      logs: loaded?.logs ?? [],
+      syncState: loaded?.syncState ?? {}
+    };
     this.addRibbonIcon("refresh-cw", "WebDAV \u4EE3\u7406\u540C\u6B65", () => void this.runSync(true));
     this.addCommand({
       id: "sync-now",
@@ -6048,7 +6055,13 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
       name: "\u6D4B\u8BD5 WebDAV \u8FDE\u63A5",
       callback: () => void this.testConnection()
     });
+    this.addCommand({
+      id: "show-sync-log",
+      name: "\u67E5\u770B\u540C\u6B65\u65E5\u5FD7",
+      callback: () => this.showLogs()
+    });
     this.statusBar = this.addStatusBarItem();
+    this.statusBar.onclick = () => this.showLogs();
     this.setStatus("WebDAV\uFF1A\u5F85\u673A");
     this.addSettingTab(new WebDavProxySyncSettingTab(this.app, this));
     this.configureInterval();
@@ -6066,13 +6079,18 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
   async testConnection() {
     try {
       this.setStatus("WebDAV\uFF1A\u6B63\u5728\u6D4B\u8BD5\u2026");
+      this.addLog("INFO", "\u5F00\u59CB\u6D4B\u8BD5 WebDAV \u8FDE\u63A5");
       await new WebDavClient(this.data).test();
+      this.addLog("INFO", "WebDAV \u8FDE\u63A5\u6D4B\u8BD5\u6210\u529F");
+      await this.saveData(this.data);
       new import_obsidian.Notice("WebDAV \u8FDE\u63A5\u6210\u529F");
       this.setStatus("WebDAV\uFF1A\u8FDE\u63A5\u6B63\u5E38");
     } catch (error) {
       const message = errorMessage(error);
-      new import_obsidian.Notice(`WebDAV \u8FDE\u63A5\u5931\u8D25\uFF1A${message}`, 1e4);
-      this.setStatus("WebDAV\uFF1A\u8FDE\u63A5\u5931\u8D25");
+      this.addLog("ERROR", `\u8FDE\u63A5\u6D4B\u8BD5\u5931\u8D25\uFF1A${message}${errorStack(error)}`);
+      await this.saveData(this.data);
+      new import_obsidian.Notice(`WebDAV \u8FDE\u63A5\u5931\u8D25\uFF1A${message}\u3002\u53EF\u5728\u547D\u4EE4\u9762\u677F\u4E2D\u6253\u5F00\u201C\u67E5\u770B\u540C\u6B65\u65E5\u5FD7\u201D\u3002`, 1e4);
+      this.setStatus(`WebDAV\uFF1A\u8FDE\u63A5\u5931\u8D25 \xB7 ${message}`);
       console.error("WebDAV connection test failed", error);
     }
   }
@@ -6086,10 +6104,12 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
       return;
     }
     this.syncing = true;
-    this.setStatus("WebDAV\uFF1A\u540C\u6B65\u4E2D\u2026");
+    this.setStatus("WebDAV\uFF1A\u6B63\u5728\u8BFB\u53D6\u8FDC\u7A0B\u6587\u4EF6\u5217\u8868\u2026");
+    this.addLog("INFO", "\u5F00\u59CB\u540C\u6B65");
     let uploaded = 0;
     let downloaded = 0;
     let conflicts = 0;
+    let currentPath = "";
     try {
       const client = new WebDavClient(this.data);
       const remote = await client.list();
@@ -6101,21 +6121,31 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
         if (item.isDirectory || this.isExcluded(path)) remote.delete(path);
       }
       const paths = /* @__PURE__ */ new Set([...local.keys(), ...remote.keys()]);
-      for (const path of Array.from(paths).sort()) {
+      const sortedPaths = Array.from(paths).sort();
+      this.addLog("INFO", `\u626B\u63CF\u5B8C\u6210\uFF1A\u672C\u5730 ${local.size} \u4E2A\u6587\u4EF6\uFF0C\u8FDC\u7A0B ${remote.size} \u4E2A\u6587\u4EF6\uFF0C\u5171\u9700\u6BD4\u8F83 ${sortedPaths.length} \u4E2A\u8DEF\u5F84`);
+      let processed = 0;
+      for (const path of sortedPaths) {
+        currentPath = path;
+        processed++;
+        this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u68C0\u67E5 ${shortPath(path)}`);
         const localFile = local.get(path);
         const remoteItem = remote.get(path);
         const previous = this.data.syncState[path];
         if (localFile && !remoteItem) {
+          this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0A\u4F20 ${shortPath(path)}`);
           const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
           const current = this.app.vault.getAbstractFileByPath(path);
           if (current instanceof import_obsidian.TFile) this.setState(path, current, uploadedItem);
           uploaded++;
+          this.addLog("INFO", `\u4E0A\u4F20\uFF1A${path}`);
           continue;
         }
         if (!localFile && remoteItem) {
+          this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0B\u8F7D ${shortPath(path)}`);
           const created = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
           this.setState(path, created, remoteItem);
           downloaded++;
+          this.addLog("INFO", `\u4E0B\u8F7D\uFF1A${path}`);
           continue;
         }
         if (!localFile || !remoteItem) continue;
@@ -6125,14 +6155,18 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
           if (localFile.stat.size === remoteItem.size && Math.abs(localFile.stat.mtime - remoteItem.modified) < 2e3) {
             this.setState(path, localFile, remoteItem);
           } else if (localFile.stat.mtime >= remoteItem.modified) {
+            this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0A\u4F20 ${shortPath(path)}`);
             const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
             const current = this.app.vault.getAbstractFileByPath(path);
             if (current instanceof import_obsidian.TFile) this.setState(path, current, uploadedItem);
             uploaded++;
+            this.addLog("INFO", `\u4E0A\u4F20\uFF1A${path}`);
           } else {
+            this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0B\u8F7D ${shortPath(path)}`);
             const updated = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
             this.setState(path, updated, remoteItem);
             downloaded++;
+            this.addLog("INFO", `\u4E0B\u8F7D\uFF1A${path}`);
           }
           continue;
         }
@@ -6140,29 +6174,39 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
         const remoteChanged = previous.remoteSig !== remoteSig;
         if (!localChanged && !remoteChanged) continue;
         if (localChanged && remoteChanged) {
+          this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u5904\u7406\u51B2\u7A81 ${shortPath(path)}`);
           await this.createConflictCopy(localFile);
           const updated = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
           this.setState(path, updated, remoteItem);
           conflicts++;
+          this.addLog("WARN", `\u53CC\u5411\u51B2\u7A81\uFF0C\u5DF2\u4FDD\u7559\u672C\u5730\u526F\u672C\uFF1A${path}`);
         } else if (localChanged) {
+          this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0A\u4F20 ${shortPath(path)}`);
           const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
           const current = this.app.vault.getAbstractFileByPath(path);
           if (current instanceof import_obsidian.TFile) this.setState(path, current, uploadedItem);
           uploaded++;
+          this.addLog("INFO", `\u4E0A\u4F20\uFF1A${path}`);
         } else {
+          this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0B\u8F7D ${shortPath(path)}`);
           const updated = await this.writeRemoteFile(path, await client.download(path), remoteItem.modified);
           this.setState(path, updated, remoteItem);
           downloaded++;
+          this.addLog("INFO", `\u4E0B\u8F7D\uFF1A${path}`);
         }
       }
-      await this.saveData(this.data);
       const summary = `\u4E0A\u4F20 ${uploaded}\uFF0C\u4E0B\u8F7D ${downloaded}\uFF0C\u51B2\u7A81 ${conflicts}`;
+      this.addLog("INFO", `\u540C\u6B65\u5B8C\u6210\uFF1A${summary}`);
+      await this.saveData(this.data);
       this.setStatus(`WebDAV\uFF1A${summary}`);
       if (showNotice || uploaded + downloaded + conflicts > 0) new import_obsidian.Notice(`WebDAV \u540C\u6B65\u5B8C\u6210\uFF1A${summary}`);
     } catch (error) {
       const message = errorMessage(error);
-      this.setStatus("WebDAV\uFF1A\u540C\u6B65\u5931\u8D25");
-      new import_obsidian.Notice(`WebDAV \u540C\u6B65\u5931\u8D25\uFF1A${message}`, 1e4);
+      const location = currentPath ? `\uFF0C\u5904\u7406\u6587\u4EF6\uFF1A${currentPath}` : "";
+      this.addLog("ERROR", `\u540C\u6B65\u5931\u8D25${location}\uFF1A${message}${errorStack(error)}`);
+      await this.saveData(this.data);
+      this.setStatus(`WebDAV\uFF1A\u540C\u6B65\u5931\u8D25 \xB7 ${message}`);
+      new import_obsidian.Notice(`WebDAV \u540C\u6B65\u5931\u8D25\uFF1A${message}${location}\u3002\u53EF\u6253\u5F00\u201C\u67E5\u770B\u540C\u6B65\u65E5\u5FD7\u201D\u67E5\u770B\u8BE6\u60C5\u3002`, 12e3);
       console.error("WebDAV sync failed", error);
     } finally {
       this.syncing = false;
@@ -6222,8 +6266,54 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
       );
     }
   }
+  showLogs() {
+    new SyncLogModal(this.app, this).open();
+  }
+  async clearLogs() {
+    this.data.logs = [];
+    await this.saveData(this.data);
+  }
+  addLog(level, message) {
+    const line = `${(/* @__PURE__ */ new Date()).toLocaleString()} [${level}] ${message}`;
+    this.data.logs.push(line);
+    if (this.data.logs.length > 300) this.data.logs.splice(0, this.data.logs.length - 300);
+    if (level === "ERROR") console.error(line);
+    else if (level === "WARN") console.warn(line);
+    else console.info(line);
+  }
   setStatus(text) {
-    if (this.statusBar) this.statusBar.setText(text);
+    if (this.statusBar) {
+      this.statusBar.setText(text);
+      this.statusBar.setAttr("title", text);
+    }
+  }
+};
+var SyncLogModal = class extends import_obsidian.Modal {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "WebDAV \u540C\u6B65\u65E5\u5FD7" });
+    const toolbar = contentEl.createDiv({ cls: "webdav-proxy-sync-log-toolbar" });
+    const copyButton = toolbar.createEl("button", { text: "\u590D\u5236\u65E5\u5FD7" });
+    copyButton.onclick = () => {
+      void navigator.clipboard.writeText(this.plugin.data.logs.join("\n"));
+      new import_obsidian.Notice("\u540C\u6B65\u65E5\u5FD7\u5DF2\u590D\u5236");
+    };
+    const clearButton = toolbar.createEl("button", { text: "\u6E05\u7A7A\u65E5\u5FD7" });
+    clearButton.onclick = async () => {
+      await this.plugin.clearLogs();
+      this.onOpen();
+    };
+    const log = contentEl.createEl("pre", { cls: "webdav-proxy-sync-log" });
+    log.setText(this.plugin.data.logs.length ? this.plugin.data.logs.join("\n") : "\u6682\u65E0\u540C\u6B65\u65E5\u5FD7");
+    log.scrollTop = log.scrollHeight;
+  }
+  onClose() {
+    this.contentEl.empty();
   }
 };
 var WebDavProxySyncSettingTab = class extends import_obsidian.PluginSettingTab {
@@ -6266,6 +6356,11 @@ var WebDavProxySyncSettingTab = class extends import_obsidian.PluginSettingTab {
       this.plugin.data.rejectUnauthorized = value;
       await this.plugin.saveSettings();
     }));
+    new import_obsidian.Setting(containerEl).setName("\u7F51\u7EDC\u8D85\u65F6\uFF08\u79D2\uFF09").setDesc("\u7F51\u7EDC\u6216\u4EE3\u7406\u8F83\u6162\u65F6\u53EF\u9002\u5F53\u589E\u5927\uFF0C\u4F8B\u5982 120 \u79D2").addText((text) => text.setValue(String(this.plugin.data.requestTimeoutSeconds)).onChange(async (value) => {
+      const parsed = Number.parseInt(value, 10);
+      this.plugin.data.requestTimeoutSeconds = Number.isFinite(parsed) && parsed >= 5 ? parsed : 60;
+      await this.plugin.saveSettings();
+    }));
     new import_obsidian.Setting(containerEl).setName("\u81EA\u52A8\u540C\u6B65\u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u5B9A\u65F6\u540C\u6B65").addText((text) => text.setValue(String(this.plugin.data.syncIntervalMinutes)).onChange(async (value) => {
       const parsed = Number.parseInt(value, 10);
       this.plugin.data.syncIntervalMinutes = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
@@ -6281,6 +6376,7 @@ var WebDavProxySyncSettingTab = class extends import_obsidian.PluginSettingTab {
       await this.plugin.saveSettings();
     }));
     new import_obsidian.Setting(containerEl).setName("\u8FDE\u63A5\u6D4B\u8BD5").setDesc("\u6D4B\u8BD5\u670D\u52A1\u5668\u3001\u8D26\u53F7\u4EE5\u53CA\u4EE3\u7406\u8BBE\u7F6E").addButton((button) => button.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").onClick(() => void this.plugin.testConnection()));
+    new import_obsidian.Setting(containerEl).setName("\u540C\u6B65\u65E5\u5FD7").setDesc("\u67E5\u770B\u6BCF\u6B21\u540C\u6B65\u7684\u626B\u63CF\u6570\u91CF\u3001\u6587\u4EF6\u64CD\u4F5C\u3001\u5931\u8D25\u4F4D\u7F6E\u548C\u9519\u8BEF\u5806\u6808").addButton((button) => button.setButtonText("\u67E5\u770B\u65E5\u5FD7").onClick(() => this.plugin.showLogs()));
     new import_obsidian.Setting(containerEl).setName("\u7ACB\u5373\u540C\u6B65").setDesc("\u9ED8\u8BA4\u4E0D\u4F1A\u4F20\u64AD\u5220\u9664\uFF1B\u53D1\u751F\u53CC\u5411\u4FEE\u6539\u65F6\u4F1A\u4FDD\u7559\u672C\u5730\u51B2\u7A81\u526F\u672C").addButton((button) => button.setCta().setButtonText("\u5F00\u59CB\u540C\u6B65").onClick(() => void this.plugin.runSync(true)));
   }
 };
@@ -6300,6 +6396,14 @@ function globMatches(path, pattern) {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, ".*");
   return new RegExp(`^${escaped}$`).test(path);
 }
+function shortPath(path) {
+  return path.length > 48 ? `\u2026${path.slice(-47)}` : path;
+}
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+function errorStack(error) {
+  if (!(error instanceof Error) || !error.stack) return "";
+  const stack = error.stack.split("\n").slice(1, 8).join(" | ");
+  return stack ? ` | ${stack.trim()}` : "";
 }
