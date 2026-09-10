@@ -1,15 +1,16 @@
 # WebDAV Proxy Sync
 
-A desktop-only Obsidian plugin that synchronizes notes and attachments with a WebDAV server through HTTP, HTTPS, SOCKS5, or SOCKS5H proxies.
+A cross-platform Obsidian plugin that synchronizes notes and attachments with a WebDAV server. Desktop builds additionally support HTTP, HTTPS, SOCKS5, and SOCKS5H proxies.
 
-一个支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H 代理的 Obsidian 桌面端 WebDAV 同步插件。
+一个支持桌面端与移动端的 Obsidian WebDAV 同步插件；桌面端额外支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H 代理。
 
 > **Beta / 测试版：** Back up your vault before the first sync. 首次同步前请备份仓库。
 
 ## Features / 功能
 
 - Bidirectional synchronization of notes and attachments / 双向同步笔记与附件
-- HTTP, HTTPS, SOCKS5 and SOCKS5H proxy support / 支持多种代理协议
+- Android and iOS support without plugin-level proxy / 支持 Android 和 iOS（使用系统网络）
+- HTTP, HTTPS, SOCKS5 and SOCKS5H proxy support on desktop / 桌面端支持多种代理协议
 - Manual, startup and scheduled sync / 手动、启动和定时同步
 - Progress indicator and persistent diagnostic log / 实时进度和持久化诊断日志
 - Conflict copies when both sides change / 双端修改时保留冲突副本
@@ -75,7 +76,7 @@ The plugin scans metadata on both sides during each run but transfers file conte
 
 ## Limitations / 当前限制
 
-- Desktop only; proxy support relies on Node.js networking APIs
+- Mobile uses Obsidian's cross-platform network API and does not support a plugin-level proxy
 - Deletions are not synchronized
 - Some WebDAV implementations do not support `Depth: infinity`
 - Some OpenList storage drivers may delay or reject `MKCOL` directory creation

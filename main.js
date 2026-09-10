@@ -29,1071 +29,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/ms/index.js
-var require_ms = __commonJS({
-  "node_modules/ms/index.js"(exports, module2) {
-    var s = 1e3;
-    var m = s * 60;
-    var h = m * 60;
-    var d = h * 24;
-    var w = d * 7;
-    var y = d * 365.25;
-    module2.exports = function(val, options) {
-      options = options || {};
-      var type = typeof val;
-      if (type === "string" && val.length > 0) {
-        return parse(val);
-      } else if (type === "number" && isFinite(val)) {
-        return options.long ? fmtLong(val) : fmtShort(val);
-      }
-      throw new Error(
-        "val is not a non-empty string or a valid number. val=" + JSON.stringify(val)
-      );
-    };
-    function parse(str) {
-      str = String(str);
-      if (str.length > 100) {
-        return;
-      }
-      var match = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(
-        str
-      );
-      if (!match) {
-        return;
-      }
-      var n = parseFloat(match[1]);
-      var type = (match[2] || "ms").toLowerCase();
-      switch (type) {
-        case "years":
-        case "year":
-        case "yrs":
-        case "yr":
-        case "y":
-          return n * y;
-        case "weeks":
-        case "week":
-        case "w":
-          return n * w;
-        case "days":
-        case "day":
-        case "d":
-          return n * d;
-        case "hours":
-        case "hour":
-        case "hrs":
-        case "hr":
-        case "h":
-          return n * h;
-        case "minutes":
-        case "minute":
-        case "mins":
-        case "min":
-        case "m":
-          return n * m;
-        case "seconds":
-        case "second":
-        case "secs":
-        case "sec":
-        case "s":
-          return n * s;
-        case "milliseconds":
-        case "millisecond":
-        case "msecs":
-        case "msec":
-        case "ms":
-          return n;
-        default:
-          return void 0;
-      }
-    }
-    function fmtShort(ms) {
-      var msAbs = Math.abs(ms);
-      if (msAbs >= d) {
-        return Math.round(ms / d) + "d";
-      }
-      if (msAbs >= h) {
-        return Math.round(ms / h) + "h";
-      }
-      if (msAbs >= m) {
-        return Math.round(ms / m) + "m";
-      }
-      if (msAbs >= s) {
-        return Math.round(ms / s) + "s";
-      }
-      return ms + "ms";
-    }
-    function fmtLong(ms) {
-      var msAbs = Math.abs(ms);
-      if (msAbs >= d) {
-        return plural(ms, msAbs, d, "day");
-      }
-      if (msAbs >= h) {
-        return plural(ms, msAbs, h, "hour");
-      }
-      if (msAbs >= m) {
-        return plural(ms, msAbs, m, "minute");
-      }
-      if (msAbs >= s) {
-        return plural(ms, msAbs, s, "second");
-      }
-      return ms + " ms";
-    }
-    function plural(ms, msAbs, n, name) {
-      var isPlural = msAbs >= n * 1.5;
-      return Math.round(ms / n) + " " + name + (isPlural ? "s" : "");
-    }
-  }
-});
-
-// node_modules/debug/src/common.js
-var require_common = __commonJS({
-  "node_modules/debug/src/common.js"(exports, module2) {
-    function setup(env) {
-      createDebug.debug = createDebug;
-      createDebug.default = createDebug;
-      createDebug.coerce = coerce;
-      createDebug.disable = disable;
-      createDebug.enable = enable;
-      createDebug.enabled = enabled;
-      createDebug.humanize = require_ms();
-      createDebug.destroy = destroy;
-      Object.keys(env).forEach((key) => {
-        createDebug[key] = env[key];
-      });
-      createDebug.names = [];
-      createDebug.skips = [];
-      createDebug.formatters = {};
-      function selectColor(namespace) {
-        let hash = 0;
-        for (let i = 0; i < namespace.length; i++) {
-          hash = (hash << 5) - hash + namespace.charCodeAt(i);
-          hash |= 0;
-        }
-        return createDebug.colors[Math.abs(hash) % createDebug.colors.length];
-      }
-      createDebug.selectColor = selectColor;
-      function createDebug(namespace) {
-        let prevTime;
-        let enableOverride = null;
-        let namespacesCache;
-        let enabledCache;
-        function debug(...args) {
-          if (!debug.enabled) {
-            return;
-          }
-          const self = debug;
-          const curr = Number(/* @__PURE__ */ new Date());
-          const ms = curr - (prevTime || curr);
-          self.diff = ms;
-          self.prev = prevTime;
-          self.curr = curr;
-          prevTime = curr;
-          args[0] = createDebug.coerce(args[0]);
-          if (typeof args[0] !== "string") {
-            args.unshift("%O");
-          }
-          let index = 0;
-          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
-            if (match === "%%") {
-              return "%";
-            }
-            index++;
-            const formatter = createDebug.formatters[format];
-            if (typeof formatter === "function") {
-              const val = args[index];
-              match = formatter.call(self, val);
-              args.splice(index, 1);
-              index--;
-            }
-            return match;
-          });
-          createDebug.formatArgs.call(self, args);
-          const logFn = self.log || createDebug.log;
-          logFn.apply(self, args);
-        }
-        debug.namespace = namespace;
-        debug.useColors = createDebug.useColors();
-        debug.color = createDebug.selectColor(namespace);
-        debug.extend = extend;
-        debug.destroy = createDebug.destroy;
-        Object.defineProperty(debug, "enabled", {
-          enumerable: true,
-          configurable: false,
-          get: () => {
-            if (enableOverride !== null) {
-              return enableOverride;
-            }
-            if (namespacesCache !== createDebug.namespaces) {
-              namespacesCache = createDebug.namespaces;
-              enabledCache = createDebug.enabled(namespace);
-            }
-            return enabledCache;
-          },
-          set: (v) => {
-            enableOverride = v;
-          }
-        });
-        if (typeof createDebug.init === "function") {
-          createDebug.init(debug);
-        }
-        return debug;
-      }
-      function extend(namespace, delimiter) {
-        const newDebug = createDebug(this.namespace + (typeof delimiter === "undefined" ? ":" : delimiter) + namespace);
-        newDebug.log = this.log;
-        return newDebug;
-      }
-      function enable(namespaces) {
-        createDebug.save(namespaces);
-        createDebug.namespaces = namespaces;
-        createDebug.names = [];
-        createDebug.skips = [];
-        const split = (typeof namespaces === "string" ? namespaces : "").trim().replace(/\s+/g, ",").split(",").filter(Boolean);
-        for (const ns of split) {
-          if (ns[0] === "-") {
-            createDebug.skips.push(ns.slice(1));
-          } else {
-            createDebug.names.push(ns);
-          }
-        }
-      }
-      function matchesTemplate(search, template) {
-        let searchIndex = 0;
-        let templateIndex = 0;
-        let starIndex = -1;
-        let matchIndex = 0;
-        while (searchIndex < search.length) {
-          if (templateIndex < template.length && (template[templateIndex] === search[searchIndex] || template[templateIndex] === "*")) {
-            if (template[templateIndex] === "*") {
-              starIndex = templateIndex;
-              matchIndex = searchIndex;
-              templateIndex++;
-            } else {
-              searchIndex++;
-              templateIndex++;
-            }
-          } else if (starIndex !== -1) {
-            templateIndex = starIndex + 1;
-            matchIndex++;
-            searchIndex = matchIndex;
-          } else {
-            return false;
-          }
-        }
-        while (templateIndex < template.length && template[templateIndex] === "*") {
-          templateIndex++;
-        }
-        return templateIndex === template.length;
-      }
-      function disable() {
-        const namespaces = [
-          ...createDebug.names,
-          ...createDebug.skips.map((namespace) => "-" + namespace)
-        ].join(",");
-        createDebug.enable("");
-        return namespaces;
-      }
-      function enabled(name) {
-        for (const skip of createDebug.skips) {
-          if (matchesTemplate(name, skip)) {
-            return false;
-          }
-        }
-        for (const ns of createDebug.names) {
-          if (matchesTemplate(name, ns)) {
-            return true;
-          }
-        }
-        return false;
-      }
-      function coerce(val) {
-        if (val instanceof Error) {
-          return val.stack || val.message;
-        }
-        return val;
-      }
-      function destroy() {
-        console.warn("Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.");
-      }
-      createDebug.enable(createDebug.load());
-      return createDebug;
-    }
-    module2.exports = setup;
-  }
-});
-
-// node_modules/debug/src/browser.js
-var require_browser = __commonJS({
-  "node_modules/debug/src/browser.js"(exports, module2) {
-    exports.formatArgs = formatArgs;
-    exports.save = save;
-    exports.load = load;
-    exports.useColors = useColors;
-    exports.storage = localstorage();
-    exports.destroy = /* @__PURE__ */ (() => {
-      let warned = false;
-      return () => {
-        if (!warned) {
-          warned = true;
-          console.warn("Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.");
-        }
-      };
-    })();
-    exports.colors = [
-      "#0000CC",
-      "#0000FF",
-      "#0033CC",
-      "#0033FF",
-      "#0066CC",
-      "#0066FF",
-      "#0099CC",
-      "#0099FF",
-      "#00CC00",
-      "#00CC33",
-      "#00CC66",
-      "#00CC99",
-      "#00CCCC",
-      "#00CCFF",
-      "#3300CC",
-      "#3300FF",
-      "#3333CC",
-      "#3333FF",
-      "#3366CC",
-      "#3366FF",
-      "#3399CC",
-      "#3399FF",
-      "#33CC00",
-      "#33CC33",
-      "#33CC66",
-      "#33CC99",
-      "#33CCCC",
-      "#33CCFF",
-      "#6600CC",
-      "#6600FF",
-      "#6633CC",
-      "#6633FF",
-      "#66CC00",
-      "#66CC33",
-      "#9900CC",
-      "#9900FF",
-      "#9933CC",
-      "#9933FF",
-      "#99CC00",
-      "#99CC33",
-      "#CC0000",
-      "#CC0033",
-      "#CC0066",
-      "#CC0099",
-      "#CC00CC",
-      "#CC00FF",
-      "#CC3300",
-      "#CC3333",
-      "#CC3366",
-      "#CC3399",
-      "#CC33CC",
-      "#CC33FF",
-      "#CC6600",
-      "#CC6633",
-      "#CC9900",
-      "#CC9933",
-      "#CCCC00",
-      "#CCCC33",
-      "#FF0000",
-      "#FF0033",
-      "#FF0066",
-      "#FF0099",
-      "#FF00CC",
-      "#FF00FF",
-      "#FF3300",
-      "#FF3333",
-      "#FF3366",
-      "#FF3399",
-      "#FF33CC",
-      "#FF33FF",
-      "#FF6600",
-      "#FF6633",
-      "#FF9900",
-      "#FF9933",
-      "#FFCC00",
-      "#FFCC33"
-    ];
-    function useColors() {
-      if (typeof window !== "undefined" && window.process && (window.process.type === "renderer" || window.process.__nwjs)) {
-        return true;
-      }
-      if (typeof navigator !== "undefined" && navigator.userAgent && navigator.userAgent.toLowerCase().match(/(edge|trident)\/(\d+)/)) {
-        return false;
-      }
-      let m;
-      return typeof document !== "undefined" && document.documentElement && document.documentElement.style && document.documentElement.style.WebkitAppearance || // Is firebug? http://stackoverflow.com/a/398120/376773
-      typeof window !== "undefined" && window.console && (window.console.firebug || window.console.exception && window.console.table) || // Is firefox >= v31?
-      // https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages
-      typeof navigator !== "undefined" && navigator.userAgent && (m = navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/)) && parseInt(m[1], 10) >= 31 || // Double check webkit in userAgent just in case we are in a worker
-      typeof navigator !== "undefined" && navigator.userAgent && navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/);
-    }
-    function formatArgs(args) {
-      args[0] = (this.useColors ? "%c" : "") + this.namespace + (this.useColors ? " %c" : " ") + args[0] + (this.useColors ? "%c " : " ") + "+" + module2.exports.humanize(this.diff);
-      if (!this.useColors) {
-        return;
-      }
-      const c = "color: " + this.color;
-      args.splice(1, 0, c, "color: inherit");
-      let index = 0;
-      let lastC = 0;
-      args[0].replace(/%[a-zA-Z%]/g, (match) => {
-        if (match === "%%") {
-          return;
-        }
-        index++;
-        if (match === "%c") {
-          lastC = index;
-        }
-      });
-      args.splice(lastC, 0, c);
-    }
-    exports.log = console.debug || console.log || (() => {
-    });
-    function save(namespaces) {
-      try {
-        if (namespaces) {
-          exports.storage.setItem("debug", namespaces);
-        } else {
-          exports.storage.removeItem("debug");
-        }
-      } catch (error) {
-      }
-    }
-    function load() {
-      let r;
-      try {
-        r = exports.storage.getItem("debug") || exports.storage.getItem("DEBUG");
-      } catch (error) {
-      }
-      if (!r && typeof process !== "undefined" && "env" in process) {
-        r = process.env.DEBUG;
-      }
-      return r;
-    }
-    function localstorage() {
-      try {
-        return localStorage;
-      } catch (error) {
-      }
-    }
-    module2.exports = require_common()(exports);
-    var { formatters } = module2.exports;
-    formatters.j = function(v) {
-      try {
-        return JSON.stringify(v);
-      } catch (error) {
-        return "[UnexpectedJSONParseError]: " + error.message;
-      }
-    };
-  }
-});
-
-// node_modules/agent-base/dist/helpers.js
-var require_helpers = __commonJS({
-  "node_modules/agent-base/dist/helpers.js"(exports) {
-    "use strict";
-    var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
-      if (k2 === void 0) k2 = k;
-      var desc = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-        desc = { enumerable: true, get: function() {
-          return m[k];
-        } };
-      }
-      Object.defineProperty(o, k2, desc);
-    }) : (function(o, m, k, k2) {
-      if (k2 === void 0) k2 = k;
-      o[k2] = m[k];
-    }));
-    var __setModuleDefault = exports && exports.__setModuleDefault || (Object.create ? (function(o, v) {
-      Object.defineProperty(o, "default", { enumerable: true, value: v });
-    }) : function(o, v) {
-      o["default"] = v;
-    });
-    var __importStar = exports && exports.__importStar || function(mod) {
-      if (mod && mod.__esModule) return mod;
-      var result = {};
-      if (mod != null) {
-        for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-      }
-      __setModuleDefault(result, mod);
-      return result;
-    };
-    Object.defineProperty(exports, "__esModule", { value: true });
-    exports.req = exports.json = exports.toBuffer = void 0;
-    var http2 = __importStar(require("http"));
-    var https2 = __importStar(require("https"));
-    async function toBuffer(stream) {
-      let length = 0;
-      const chunks = [];
-      for await (const chunk of stream) {
-        length += chunk.length;
-        chunks.push(chunk);
-      }
-      return Buffer.concat(chunks, length);
-    }
-    exports.toBuffer = toBuffer;
-    async function json(stream) {
-      const buf = await toBuffer(stream);
-      const str = buf.toString("utf8");
-      try {
-        return JSON.parse(str);
-      } catch (_err) {
-        const err = _err;
-        err.message += ` (input: ${str})`;
-        throw err;
-      }
-    }
-    exports.json = json;
-    function req(url, opts = {}) {
-      const href = typeof url === "string" ? url : url.href;
-      const req2 = (href.startsWith("https:") ? https2 : http2).request(url, opts);
-      const promise = new Promise((resolve, reject) => {
-        req2.once("response", resolve).once("error", reject).end();
-      });
-      req2.then = promise.then.bind(promise);
-      return req2;
-    }
-    exports.req = req;
-  }
-});
-
-// node_modules/agent-base/dist/index.js
-var require_dist = __commonJS({
-  "node_modules/agent-base/dist/index.js"(exports) {
-    "use strict";
-    var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
-      if (k2 === void 0) k2 = k;
-      var desc = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-        desc = { enumerable: true, get: function() {
-          return m[k];
-        } };
-      }
-      Object.defineProperty(o, k2, desc);
-    }) : (function(o, m, k, k2) {
-      if (k2 === void 0) k2 = k;
-      o[k2] = m[k];
-    }));
-    var __setModuleDefault = exports && exports.__setModuleDefault || (Object.create ? (function(o, v) {
-      Object.defineProperty(o, "default", { enumerable: true, value: v });
-    }) : function(o, v) {
-      o["default"] = v;
-    });
-    var __importStar = exports && exports.__importStar || function(mod) {
-      if (mod && mod.__esModule) return mod;
-      var result = {};
-      if (mod != null) {
-        for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-      }
-      __setModuleDefault(result, mod);
-      return result;
-    };
-    var __exportStar = exports && exports.__exportStar || function(m, exports2) {
-      for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports2, p)) __createBinding(exports2, m, p);
-    };
-    Object.defineProperty(exports, "__esModule", { value: true });
-    exports.Agent = void 0;
-    var net = __importStar(require("net"));
-    var http2 = __importStar(require("http"));
-    var https_1 = require("https");
-    __exportStar(require_helpers(), exports);
-    var INTERNAL = Symbol("AgentBaseInternalState");
-    var Agent2 = class extends http2.Agent {
-      constructor(opts) {
-        super(opts);
-        this[INTERNAL] = {};
-      }
-      /**
-       * Determine whether this is an `http` or `https` request.
-       */
-      isSecureEndpoint(options) {
-        if (options) {
-          if (typeof options.secureEndpoint === "boolean") {
-            return options.secureEndpoint;
-          }
-          if (typeof options.protocol === "string") {
-            return options.protocol === "https:";
-          }
-        }
-        const { stack } = new Error();
-        if (typeof stack !== "string")
-          return false;
-        return stack.split("\n").some((l) => l.indexOf("(https.js:") !== -1 || l.indexOf("node:https:") !== -1);
-      }
-      // In order to support async signatures in `connect()` and Node's native
-      // connection pooling in `http.Agent`, the array of sockets for each origin
-      // has to be updated synchronously. This is so the length of the array is
-      // accurate when `addRequest()` is next called. We achieve this by creating a
-      // fake socket and adding it to `sockets[origin]` and incrementing
-      // `totalSocketCount`.
-      incrementSockets(name) {
-        if (this.maxSockets === Infinity && this.maxTotalSockets === Infinity) {
-          return null;
-        }
-        if (!this.sockets[name]) {
-          this.sockets[name] = [];
-        }
-        const fakeSocket = new net.Socket({ writable: false });
-        this.sockets[name].push(fakeSocket);
-        this.totalSocketCount++;
-        return fakeSocket;
-      }
-      decrementSockets(name, socket) {
-        if (!this.sockets[name] || socket === null) {
-          return;
-        }
-        const sockets = this.sockets[name];
-        const index = sockets.indexOf(socket);
-        if (index !== -1) {
-          sockets.splice(index, 1);
-          this.totalSocketCount--;
-          if (sockets.length === 0) {
-            delete this.sockets[name];
-          }
-        }
-      }
-      // In order to properly update the socket pool, we need to call `getName()` on
-      // the core `https.Agent` if it is a secureEndpoint.
-      getName(options) {
-        const secureEndpoint = this.isSecureEndpoint(options);
-        if (secureEndpoint) {
-          return https_1.Agent.prototype.getName.call(this, options);
-        }
-        return super.getName(options);
-      }
-      createSocket(req, options, cb) {
-        const connectOpts = {
-          ...options,
-          secureEndpoint: this.isSecureEndpoint(options)
-        };
-        const name = this.getName(connectOpts);
-        const fakeSocket = this.incrementSockets(name);
-        Promise.resolve().then(() => this.connect(req, connectOpts)).then((socket) => {
-          this.decrementSockets(name, fakeSocket);
-          if (socket instanceof http2.Agent) {
-            try {
-              return socket.addRequest(req, connectOpts);
-            } catch (err) {
-              return cb(err);
-            }
-          }
-          this[INTERNAL].currentSocket = socket;
-          super.createSocket(req, options, cb);
-        }, (err) => {
-          this.decrementSockets(name, fakeSocket);
-          cb(err);
-        });
-      }
-      createConnection() {
-        const socket = this[INTERNAL].currentSocket;
-        this[INTERNAL].currentSocket = void 0;
-        if (!socket) {
-          throw new Error("No socket was returned in the `connect()` function");
-        }
-        return socket;
-      }
-      get defaultPort() {
-        return this[INTERNAL].defaultPort ?? (this.protocol === "https:" ? 443 : 80);
-      }
-      set defaultPort(v) {
-        if (this[INTERNAL]) {
-          this[INTERNAL].defaultPort = v;
-        }
-      }
-      get protocol() {
-        return this[INTERNAL].protocol ?? (this.isSecureEndpoint() ? "https:" : "http:");
-      }
-      set protocol(v) {
-        if (this[INTERNAL]) {
-          this[INTERNAL].protocol = v;
-        }
-      }
-    };
-    exports.Agent = Agent2;
-  }
-});
-
-// node_modules/http-proxy-agent/dist/index.js
-var require_dist2 = __commonJS({
-  "node_modules/http-proxy-agent/dist/index.js"(exports) {
-    "use strict";
-    var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
-      if (k2 === void 0) k2 = k;
-      var desc = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-        desc = { enumerable: true, get: function() {
-          return m[k];
-        } };
-      }
-      Object.defineProperty(o, k2, desc);
-    }) : (function(o, m, k, k2) {
-      if (k2 === void 0) k2 = k;
-      o[k2] = m[k];
-    }));
-    var __setModuleDefault = exports && exports.__setModuleDefault || (Object.create ? (function(o, v) {
-      Object.defineProperty(o, "default", { enumerable: true, value: v });
-    }) : function(o, v) {
-      o["default"] = v;
-    });
-    var __importStar = exports && exports.__importStar || function(mod) {
-      if (mod && mod.__esModule) return mod;
-      var result = {};
-      if (mod != null) {
-        for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-      }
-      __setModuleDefault(result, mod);
-      return result;
-    };
-    var __importDefault = exports && exports.__importDefault || function(mod) {
-      return mod && mod.__esModule ? mod : { "default": mod };
-    };
-    Object.defineProperty(exports, "__esModule", { value: true });
-    exports.HttpProxyAgent = void 0;
-    var net = __importStar(require("net"));
-    var tls = __importStar(require("tls"));
-    var debug_1 = __importDefault(require_browser());
-    var events_1 = require("events");
-    var agent_base_1 = require_dist();
-    var url_1 = require("url");
-    var debug = (0, debug_1.default)("http-proxy-agent");
-    var HttpProxyAgent2 = class extends agent_base_1.Agent {
-      constructor(proxy, opts) {
-        super(opts);
-        this.proxy = typeof proxy === "string" ? new url_1.URL(proxy) : proxy;
-        this.proxyHeaders = opts?.headers ?? {};
-        debug("Creating new HttpProxyAgent instance: %o", this.proxy.href);
-        const host = (this.proxy.hostname || this.proxy.host).replace(/^\[|\]$/g, "");
-        const port = this.proxy.port ? parseInt(this.proxy.port, 10) : this.proxy.protocol === "https:" ? 443 : 80;
-        this.connectOpts = {
-          ...opts ? omit(opts, "headers") : null,
-          host,
-          port
-        };
-      }
-      addRequest(req, opts) {
-        req._header = null;
-        this.setRequestProps(req, opts);
-        super.addRequest(req, opts);
-      }
-      setRequestProps(req, opts) {
-        const { proxy } = this;
-        const protocol = opts.secureEndpoint ? "https:" : "http:";
-        const hostname = req.getHeader("host") || "localhost";
-        const base = `${protocol}//${hostname}`;
-        const url = new url_1.URL(req.path, base);
-        if (opts.port !== 80) {
-          url.port = String(opts.port);
-        }
-        req.path = String(url);
-        const headers = typeof this.proxyHeaders === "function" ? this.proxyHeaders() : { ...this.proxyHeaders };
-        if (proxy.username || proxy.password) {
-          const auth = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
-          headers["Proxy-Authorization"] = `Basic ${Buffer.from(auth).toString("base64")}`;
-        }
-        if (!headers["Proxy-Connection"]) {
-          headers["Proxy-Connection"] = this.keepAlive ? "Keep-Alive" : "close";
-        }
-        for (const name of Object.keys(headers)) {
-          const value = headers[name];
-          if (value) {
-            req.setHeader(name, value);
-          }
-        }
-      }
-      async connect(req, opts) {
-        req._header = null;
-        if (!req.path.includes("://")) {
-          this.setRequestProps(req, opts);
-        }
-        let first;
-        let endOfHeaders;
-        debug("Regenerating stored HTTP header string for request");
-        req._implicitHeader();
-        if (req.outputData && req.outputData.length > 0) {
-          debug("Patching connection write() output buffer with updated header");
-          first = req.outputData[0].data;
-          endOfHeaders = first.indexOf("\r\n\r\n") + 4;
-          req.outputData[0].data = req._header + first.substring(endOfHeaders);
-          debug("Output buffer: %o", req.outputData[0].data);
-        }
-        let socket;
-        if (this.proxy.protocol === "https:") {
-          debug("Creating `tls.Socket`: %o", this.connectOpts);
-          socket = tls.connect(this.connectOpts);
-        } else {
-          debug("Creating `net.Socket`: %o", this.connectOpts);
-          socket = net.connect(this.connectOpts);
-        }
-        await (0, events_1.once)(socket, "connect");
-        return socket;
-      }
-    };
-    HttpProxyAgent2.protocols = ["http", "https"];
-    exports.HttpProxyAgent = HttpProxyAgent2;
-    function omit(obj, ...keys) {
-      const ret = {};
-      let key;
-      for (key in obj) {
-        if (!keys.includes(key)) {
-          ret[key] = obj[key];
-        }
-      }
-      return ret;
-    }
-  }
-});
-
-// node_modules/https-proxy-agent/dist/parse-proxy-response.js
-var require_parse_proxy_response = __commonJS({
-  "node_modules/https-proxy-agent/dist/parse-proxy-response.js"(exports) {
-    "use strict";
-    var __importDefault = exports && exports.__importDefault || function(mod) {
-      return mod && mod.__esModule ? mod : { "default": mod };
-    };
-    Object.defineProperty(exports, "__esModule", { value: true });
-    exports.parseProxyResponse = void 0;
-    var debug_1 = __importDefault(require_browser());
-    var debug = (0, debug_1.default)("https-proxy-agent:parse-proxy-response");
-    function parseProxyResponse(socket) {
-      return new Promise((resolve, reject) => {
-        let buffersLength = 0;
-        const buffers = [];
-        function read() {
-          const b = socket.read();
-          if (b)
-            ondata(b);
-          else
-            socket.once("readable", read);
-        }
-        function cleanup() {
-          socket.removeListener("end", onend);
-          socket.removeListener("error", onerror);
-          socket.removeListener("readable", read);
-        }
-        function onend() {
-          cleanup();
-          debug("onend");
-          reject(new Error("Proxy connection ended before receiving CONNECT response"));
-        }
-        function onerror(err) {
-          cleanup();
-          debug("onerror %o", err);
-          reject(err);
-        }
-        function ondata(b) {
-          buffers.push(b);
-          buffersLength += b.length;
-          const buffered = Buffer.concat(buffers, buffersLength);
-          const endOfHeaders = buffered.indexOf("\r\n\r\n");
-          if (endOfHeaders === -1) {
-            debug("have not received end of HTTP headers yet...");
-            read();
-            return;
-          }
-          const headerParts = buffered.slice(0, endOfHeaders).toString("ascii").split("\r\n");
-          const firstLine = headerParts.shift();
-          if (!firstLine) {
-            socket.destroy();
-            return reject(new Error("No header received from proxy CONNECT response"));
-          }
-          const firstLineParts = firstLine.split(" ");
-          const statusCode = +firstLineParts[1];
-          const statusText = firstLineParts.slice(2).join(" ");
-          const headers = {};
-          for (const header of headerParts) {
-            if (!header)
-              continue;
-            const firstColon = header.indexOf(":");
-            if (firstColon === -1) {
-              socket.destroy();
-              return reject(new Error(`Invalid header from proxy CONNECT response: "${header}"`));
-            }
-            const key = header.slice(0, firstColon).toLowerCase();
-            const value = header.slice(firstColon + 1).trimStart();
-            const current = headers[key];
-            if (typeof current === "string") {
-              headers[key] = [current, value];
-            } else if (Array.isArray(current)) {
-              current.push(value);
-            } else {
-              headers[key] = value;
-            }
-          }
-          debug("got proxy server response: %o %o", firstLine, headers);
-          cleanup();
-          resolve({
-            connect: {
-              statusCode,
-              statusText,
-              headers
-            },
-            buffered
-          });
-        }
-        socket.on("error", onerror);
-        socket.on("end", onend);
-        read();
-      });
-    }
-    exports.parseProxyResponse = parseProxyResponse;
-  }
-});
-
-// node_modules/https-proxy-agent/dist/index.js
-var require_dist3 = __commonJS({
-  "node_modules/https-proxy-agent/dist/index.js"(exports) {
-    "use strict";
-    var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
-      if (k2 === void 0) k2 = k;
-      var desc = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-        desc = { enumerable: true, get: function() {
-          return m[k];
-        } };
-      }
-      Object.defineProperty(o, k2, desc);
-    }) : (function(o, m, k, k2) {
-      if (k2 === void 0) k2 = k;
-      o[k2] = m[k];
-    }));
-    var __setModuleDefault = exports && exports.__setModuleDefault || (Object.create ? (function(o, v) {
-      Object.defineProperty(o, "default", { enumerable: true, value: v });
-    }) : function(o, v) {
-      o["default"] = v;
-    });
-    var __importStar = exports && exports.__importStar || function(mod) {
-      if (mod && mod.__esModule) return mod;
-      var result = {};
-      if (mod != null) {
-        for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-      }
-      __setModuleDefault(result, mod);
-      return result;
-    };
-    var __importDefault = exports && exports.__importDefault || function(mod) {
-      return mod && mod.__esModule ? mod : { "default": mod };
-    };
-    Object.defineProperty(exports, "__esModule", { value: true });
-    exports.HttpsProxyAgent = void 0;
-    var net = __importStar(require("net"));
-    var tls = __importStar(require("tls"));
-    var assert_1 = __importDefault(require("assert"));
-    var debug_1 = __importDefault(require_browser());
-    var agent_base_1 = require_dist();
-    var url_1 = require("url");
-    var parse_proxy_response_1 = require_parse_proxy_response();
-    var debug = (0, debug_1.default)("https-proxy-agent");
-    var setServernameFromNonIpHost = (options) => {
-      if (options.servername === void 0 && options.host && !net.isIP(options.host)) {
-        return {
-          ...options,
-          servername: options.host
-        };
-      }
-      return options;
-    };
-    var HttpsProxyAgent2 = class extends agent_base_1.Agent {
-      constructor(proxy, opts) {
-        super(opts);
-        this.options = { path: void 0 };
-        this.proxy = typeof proxy === "string" ? new url_1.URL(proxy) : proxy;
-        this.proxyHeaders = opts?.headers ?? {};
-        debug("Creating new HttpsProxyAgent instance: %o", this.proxy.href);
-        const host = (this.proxy.hostname || this.proxy.host).replace(/^\[|\]$/g, "");
-        const port = this.proxy.port ? parseInt(this.proxy.port, 10) : this.proxy.protocol === "https:" ? 443 : 80;
-        this.connectOpts = {
-          // Attempt to negotiate http/1.1 for proxy servers that support http/2
-          ALPNProtocols: ["http/1.1"],
-          ...opts ? omit(opts, "headers") : null,
-          host,
-          port
-        };
-      }
-      /**
-       * Called when the node-core HTTP client library is creating a
-       * new HTTP request.
-       */
-      async connect(req, opts) {
-        const { proxy } = this;
-        if (!opts.host) {
-          throw new TypeError('No "host" provided');
-        }
-        let socket;
-        if (proxy.protocol === "https:") {
-          debug("Creating `tls.Socket`: %o", this.connectOpts);
-          socket = tls.connect(setServernameFromNonIpHost(this.connectOpts));
-        } else {
-          debug("Creating `net.Socket`: %o", this.connectOpts);
-          socket = net.connect(this.connectOpts);
-        }
-        const headers = typeof this.proxyHeaders === "function" ? this.proxyHeaders() : { ...this.proxyHeaders };
-        const host = net.isIPv6(opts.host) ? `[${opts.host}]` : opts.host;
-        let payload = `CONNECT ${host}:${opts.port} HTTP/1.1\r
-`;
-        if (proxy.username || proxy.password) {
-          const auth = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
-          headers["Proxy-Authorization"] = `Basic ${Buffer.from(auth).toString("base64")}`;
-        }
-        headers.Host = `${host}:${opts.port}`;
-        if (!headers["Proxy-Connection"]) {
-          headers["Proxy-Connection"] = this.keepAlive ? "Keep-Alive" : "close";
-        }
-        for (const name of Object.keys(headers)) {
-          payload += `${name}: ${headers[name]}\r
-`;
-        }
-        const proxyResponsePromise = (0, parse_proxy_response_1.parseProxyResponse)(socket);
-        socket.write(`${payload}\r
-`);
-        const { connect, buffered } = await proxyResponsePromise;
-        req.emit("proxyConnect", connect);
-        this.emit("proxyConnect", connect, req);
-        if (connect.statusCode === 200) {
-          req.once("socket", resume);
-          if (opts.secureEndpoint) {
-            debug("Upgrading socket connection to TLS");
-            return tls.connect({
-              ...omit(setServernameFromNonIpHost(opts), "host", "path", "port"),
-              socket
-            });
-          }
-          return socket;
-        }
-        socket.destroy();
-        const fakeSocket = new net.Socket({ writable: false });
-        fakeSocket.readable = true;
-        req.once("socket", (s) => {
-          debug("Replaying proxy buffer for failed request");
-          (0, assert_1.default)(s.listenerCount("data") > 0);
-          s.push(buffered);
-          s.push(null);
-        });
-        return fakeSocket;
-      }
-    };
-    HttpsProxyAgent2.protocols = ["http", "https"];
-    exports.HttpsProxyAgent = HttpsProxyAgent2;
-    function resume(socket) {
-      socket.resume();
-    }
-    function omit(obj, ...keys) {
-      const ret = {};
-      let key;
-      for (key in obj) {
-        if (!keys.includes(key)) {
-          ret[key] = obj[key];
-        }
-      }
-      return ret;
-    }
-  }
-});
-
 // node_modules/smart-buffer/build/utils.js
 var require_utils = __commonJS({
   "node_modules/smart-buffer/build/utils.js"(exports) {
@@ -2479,7 +1414,7 @@ var require_address_error = __commonJS({
 });
 
 // node_modules/ip-address/dist/common.js
-var require_common2 = __commonJS({
+var require_common = __commonJS({
   "node_modules/ip-address/dist/common.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -2652,7 +1587,7 @@ var require_ipv4 = __commonJS({
     };
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.Address4 = void 0;
-    var common = __importStar(require_common2());
+    var common = __importStar(require_common());
     var constants = __importStar(require_constants2());
     var address_error_1 = require_address_error();
     var isCorrect4 = common.isCorrect(constants.BITS);
@@ -3268,7 +2203,7 @@ var require_constants3 = __commonJS({
 });
 
 // node_modules/ip-address/dist/v6/helpers.js
-var require_helpers2 = __commonJS({
+var require_helpers = __commonJS({
   "node_modules/ip-address/dist/v6/helpers.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -3431,14 +2366,14 @@ var require_ipv6 = __commonJS({
     };
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.Address6 = void 0;
-    var common = __importStar(require_common2());
+    var common = __importStar(require_common());
     var constants4 = __importStar(require_constants2());
     var constants6 = __importStar(require_constants3());
-    var helpers = __importStar(require_helpers2());
+    var helpers = __importStar(require_helpers());
     var ipv4_1 = require_ipv4();
     var regular_expressions_1 = require_regular_expressions();
     var address_error_1 = require_address_error();
-    var common_1 = require_common2();
+    var common_1 = require_common();
     var isCorrect6 = common.isCorrect(constants6.BITS);
     function assert(condition) {
       if (!condition) {
@@ -4772,13 +3707,13 @@ var require_ip_address = __commonJS({
     Object.defineProperty(exports, "AddressError", { enumerable: true, get: function() {
       return address_error_1.AddressError;
     } });
-    var helpers = __importStar(require_helpers2());
+    var helpers = __importStar(require_helpers());
     exports.v6 = { helpers };
   }
 });
 
 // node_modules/socks/build/common/helpers.js
-var require_helpers3 = __commonJS({
+var require_helpers2 = __commonJS({
   "node_modules/socks/build/common/helpers.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -4968,7 +3903,7 @@ var require_socksclient = __commonJS({
     var net = require("net");
     var smart_buffer_1 = require_smartbuffer();
     var constants_1 = require_constants();
-    var helpers_1 = require_helpers3();
+    var helpers_1 = require_helpers2();
     var receivebuffer_1 = require_receivebuffer();
     var util_1 = require_util();
     Object.defineProperty(exports, "SocksClientError", { enumerable: true, get: function() {
@@ -5635,8 +4570,697 @@ var require_build = __commonJS({
   }
 });
 
+// node_modules/agent-base/dist/helpers.js
+var require_helpers3 = __commonJS({
+  "node_modules/agent-base/dist/helpers.js"(exports) {
+    "use strict";
+    var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
+      if (k2 === void 0) k2 = k;
+      var desc = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+        desc = { enumerable: true, get: function() {
+          return m[k];
+        } };
+      }
+      Object.defineProperty(o, k2, desc);
+    }) : (function(o, m, k, k2) {
+      if (k2 === void 0) k2 = k;
+      o[k2] = m[k];
+    }));
+    var __setModuleDefault = exports && exports.__setModuleDefault || (Object.create ? (function(o, v) {
+      Object.defineProperty(o, "default", { enumerable: true, value: v });
+    }) : function(o, v) {
+      o["default"] = v;
+    });
+    var __importStar = exports && exports.__importStar || function(mod) {
+      if (mod && mod.__esModule) return mod;
+      var result = {};
+      if (mod != null) {
+        for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+      }
+      __setModuleDefault(result, mod);
+      return result;
+    };
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.req = exports.json = exports.toBuffer = void 0;
+    var http = __importStar(require("http"));
+    var https = __importStar(require("https"));
+    async function toBuffer(stream) {
+      let length = 0;
+      const chunks = [];
+      for await (const chunk of stream) {
+        length += chunk.length;
+        chunks.push(chunk);
+      }
+      return Buffer.concat(chunks, length);
+    }
+    exports.toBuffer = toBuffer;
+    async function json(stream) {
+      const buf = await toBuffer(stream);
+      const str = buf.toString("utf8");
+      try {
+        return JSON.parse(str);
+      } catch (_err) {
+        const err = _err;
+        err.message += ` (input: ${str})`;
+        throw err;
+      }
+    }
+    exports.json = json;
+    function req(url, opts = {}) {
+      const href = typeof url === "string" ? url : url.href;
+      const req2 = (href.startsWith("https:") ? https : http).request(url, opts);
+      const promise = new Promise((resolve, reject) => {
+        req2.once("response", resolve).once("error", reject).end();
+      });
+      req2.then = promise.then.bind(promise);
+      return req2;
+    }
+    exports.req = req;
+  }
+});
+
+// node_modules/agent-base/dist/index.js
+var require_dist = __commonJS({
+  "node_modules/agent-base/dist/index.js"(exports) {
+    "use strict";
+    var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
+      if (k2 === void 0) k2 = k;
+      var desc = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+        desc = { enumerable: true, get: function() {
+          return m[k];
+        } };
+      }
+      Object.defineProperty(o, k2, desc);
+    }) : (function(o, m, k, k2) {
+      if (k2 === void 0) k2 = k;
+      o[k2] = m[k];
+    }));
+    var __setModuleDefault = exports && exports.__setModuleDefault || (Object.create ? (function(o, v) {
+      Object.defineProperty(o, "default", { enumerable: true, value: v });
+    }) : function(o, v) {
+      o["default"] = v;
+    });
+    var __importStar = exports && exports.__importStar || function(mod) {
+      if (mod && mod.__esModule) return mod;
+      var result = {};
+      if (mod != null) {
+        for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+      }
+      __setModuleDefault(result, mod);
+      return result;
+    };
+    var __exportStar = exports && exports.__exportStar || function(m, exports2) {
+      for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports2, p)) __createBinding(exports2, m, p);
+    };
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.Agent = void 0;
+    var net = __importStar(require("net"));
+    var http = __importStar(require("http"));
+    var https_1 = require("https");
+    __exportStar(require_helpers3(), exports);
+    var INTERNAL = Symbol("AgentBaseInternalState");
+    var Agent = class extends http.Agent {
+      constructor(opts) {
+        super(opts);
+        this[INTERNAL] = {};
+      }
+      /**
+       * Determine whether this is an `http` or `https` request.
+       */
+      isSecureEndpoint(options) {
+        if (options) {
+          if (typeof options.secureEndpoint === "boolean") {
+            return options.secureEndpoint;
+          }
+          if (typeof options.protocol === "string") {
+            return options.protocol === "https:";
+          }
+        }
+        const { stack } = new Error();
+        if (typeof stack !== "string")
+          return false;
+        return stack.split("\n").some((l) => l.indexOf("(https.js:") !== -1 || l.indexOf("node:https:") !== -1);
+      }
+      // In order to support async signatures in `connect()` and Node's native
+      // connection pooling in `http.Agent`, the array of sockets for each origin
+      // has to be updated synchronously. This is so the length of the array is
+      // accurate when `addRequest()` is next called. We achieve this by creating a
+      // fake socket and adding it to `sockets[origin]` and incrementing
+      // `totalSocketCount`.
+      incrementSockets(name) {
+        if (this.maxSockets === Infinity && this.maxTotalSockets === Infinity) {
+          return null;
+        }
+        if (!this.sockets[name]) {
+          this.sockets[name] = [];
+        }
+        const fakeSocket = new net.Socket({ writable: false });
+        this.sockets[name].push(fakeSocket);
+        this.totalSocketCount++;
+        return fakeSocket;
+      }
+      decrementSockets(name, socket) {
+        if (!this.sockets[name] || socket === null) {
+          return;
+        }
+        const sockets = this.sockets[name];
+        const index = sockets.indexOf(socket);
+        if (index !== -1) {
+          sockets.splice(index, 1);
+          this.totalSocketCount--;
+          if (sockets.length === 0) {
+            delete this.sockets[name];
+          }
+        }
+      }
+      // In order to properly update the socket pool, we need to call `getName()` on
+      // the core `https.Agent` if it is a secureEndpoint.
+      getName(options) {
+        const secureEndpoint = this.isSecureEndpoint(options);
+        if (secureEndpoint) {
+          return https_1.Agent.prototype.getName.call(this, options);
+        }
+        return super.getName(options);
+      }
+      createSocket(req, options, cb) {
+        const connectOpts = {
+          ...options,
+          secureEndpoint: this.isSecureEndpoint(options)
+        };
+        const name = this.getName(connectOpts);
+        const fakeSocket = this.incrementSockets(name);
+        Promise.resolve().then(() => this.connect(req, connectOpts)).then((socket) => {
+          this.decrementSockets(name, fakeSocket);
+          if (socket instanceof http.Agent) {
+            try {
+              return socket.addRequest(req, connectOpts);
+            } catch (err) {
+              return cb(err);
+            }
+          }
+          this[INTERNAL].currentSocket = socket;
+          super.createSocket(req, options, cb);
+        }, (err) => {
+          this.decrementSockets(name, fakeSocket);
+          cb(err);
+        });
+      }
+      createConnection() {
+        const socket = this[INTERNAL].currentSocket;
+        this[INTERNAL].currentSocket = void 0;
+        if (!socket) {
+          throw new Error("No socket was returned in the `connect()` function");
+        }
+        return socket;
+      }
+      get defaultPort() {
+        return this[INTERNAL].defaultPort ?? (this.protocol === "https:" ? 443 : 80);
+      }
+      set defaultPort(v) {
+        if (this[INTERNAL]) {
+          this[INTERNAL].defaultPort = v;
+        }
+      }
+      get protocol() {
+        return this[INTERNAL].protocol ?? (this.isSecureEndpoint() ? "https:" : "http:");
+      }
+      set protocol(v) {
+        if (this[INTERNAL]) {
+          this[INTERNAL].protocol = v;
+        }
+      }
+    };
+    exports.Agent = Agent;
+  }
+});
+
+// node_modules/ms/index.js
+var require_ms = __commonJS({
+  "node_modules/ms/index.js"(exports, module2) {
+    var s = 1e3;
+    var m = s * 60;
+    var h = m * 60;
+    var d = h * 24;
+    var w = d * 7;
+    var y = d * 365.25;
+    module2.exports = function(val, options) {
+      options = options || {};
+      var type = typeof val;
+      if (type === "string" && val.length > 0) {
+        return parse(val);
+      } else if (type === "number" && isFinite(val)) {
+        return options.long ? fmtLong(val) : fmtShort(val);
+      }
+      throw new Error(
+        "val is not a non-empty string or a valid number. val=" + JSON.stringify(val)
+      );
+    };
+    function parse(str) {
+      str = String(str);
+      if (str.length > 100) {
+        return;
+      }
+      var match = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(
+        str
+      );
+      if (!match) {
+        return;
+      }
+      var n = parseFloat(match[1]);
+      var type = (match[2] || "ms").toLowerCase();
+      switch (type) {
+        case "years":
+        case "year":
+        case "yrs":
+        case "yr":
+        case "y":
+          return n * y;
+        case "weeks":
+        case "week":
+        case "w":
+          return n * w;
+        case "days":
+        case "day":
+        case "d":
+          return n * d;
+        case "hours":
+        case "hour":
+        case "hrs":
+        case "hr":
+        case "h":
+          return n * h;
+        case "minutes":
+        case "minute":
+        case "mins":
+        case "min":
+        case "m":
+          return n * m;
+        case "seconds":
+        case "second":
+        case "secs":
+        case "sec":
+        case "s":
+          return n * s;
+        case "milliseconds":
+        case "millisecond":
+        case "msecs":
+        case "msec":
+        case "ms":
+          return n;
+        default:
+          return void 0;
+      }
+    }
+    function fmtShort(ms) {
+      var msAbs = Math.abs(ms);
+      if (msAbs >= d) {
+        return Math.round(ms / d) + "d";
+      }
+      if (msAbs >= h) {
+        return Math.round(ms / h) + "h";
+      }
+      if (msAbs >= m) {
+        return Math.round(ms / m) + "m";
+      }
+      if (msAbs >= s) {
+        return Math.round(ms / s) + "s";
+      }
+      return ms + "ms";
+    }
+    function fmtLong(ms) {
+      var msAbs = Math.abs(ms);
+      if (msAbs >= d) {
+        return plural(ms, msAbs, d, "day");
+      }
+      if (msAbs >= h) {
+        return plural(ms, msAbs, h, "hour");
+      }
+      if (msAbs >= m) {
+        return plural(ms, msAbs, m, "minute");
+      }
+      if (msAbs >= s) {
+        return plural(ms, msAbs, s, "second");
+      }
+      return ms + " ms";
+    }
+    function plural(ms, msAbs, n, name) {
+      var isPlural = msAbs >= n * 1.5;
+      return Math.round(ms / n) + " " + name + (isPlural ? "s" : "");
+    }
+  }
+});
+
+// node_modules/debug/src/common.js
+var require_common2 = __commonJS({
+  "node_modules/debug/src/common.js"(exports, module2) {
+    function setup(env) {
+      createDebug.debug = createDebug;
+      createDebug.default = createDebug;
+      createDebug.coerce = coerce;
+      createDebug.disable = disable;
+      createDebug.enable = enable;
+      createDebug.enabled = enabled;
+      createDebug.humanize = require_ms();
+      createDebug.destroy = destroy;
+      Object.keys(env).forEach((key) => {
+        createDebug[key] = env[key];
+      });
+      createDebug.names = [];
+      createDebug.skips = [];
+      createDebug.formatters = {};
+      function selectColor(namespace) {
+        let hash = 0;
+        for (let i = 0; i < namespace.length; i++) {
+          hash = (hash << 5) - hash + namespace.charCodeAt(i);
+          hash |= 0;
+        }
+        return createDebug.colors[Math.abs(hash) % createDebug.colors.length];
+      }
+      createDebug.selectColor = selectColor;
+      function createDebug(namespace) {
+        let prevTime;
+        let enableOverride = null;
+        let namespacesCache;
+        let enabledCache;
+        function debug(...args) {
+          if (!debug.enabled) {
+            return;
+          }
+          const self = debug;
+          const curr = Number(/* @__PURE__ */ new Date());
+          const ms = curr - (prevTime || curr);
+          self.diff = ms;
+          self.prev = prevTime;
+          self.curr = curr;
+          prevTime = curr;
+          args[0] = createDebug.coerce(args[0]);
+          if (typeof args[0] !== "string") {
+            args.unshift("%O");
+          }
+          let index = 0;
+          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
+            if (match === "%%") {
+              return "%";
+            }
+            index++;
+            const formatter = createDebug.formatters[format];
+            if (typeof formatter === "function") {
+              const val = args[index];
+              match = formatter.call(self, val);
+              args.splice(index, 1);
+              index--;
+            }
+            return match;
+          });
+          createDebug.formatArgs.call(self, args);
+          const logFn = self.log || createDebug.log;
+          logFn.apply(self, args);
+        }
+        debug.namespace = namespace;
+        debug.useColors = createDebug.useColors();
+        debug.color = createDebug.selectColor(namespace);
+        debug.extend = extend;
+        debug.destroy = createDebug.destroy;
+        Object.defineProperty(debug, "enabled", {
+          enumerable: true,
+          configurable: false,
+          get: () => {
+            if (enableOverride !== null) {
+              return enableOverride;
+            }
+            if (namespacesCache !== createDebug.namespaces) {
+              namespacesCache = createDebug.namespaces;
+              enabledCache = createDebug.enabled(namespace);
+            }
+            return enabledCache;
+          },
+          set: (v) => {
+            enableOverride = v;
+          }
+        });
+        if (typeof createDebug.init === "function") {
+          createDebug.init(debug);
+        }
+        return debug;
+      }
+      function extend(namespace, delimiter) {
+        const newDebug = createDebug(this.namespace + (typeof delimiter === "undefined" ? ":" : delimiter) + namespace);
+        newDebug.log = this.log;
+        return newDebug;
+      }
+      function enable(namespaces) {
+        createDebug.save(namespaces);
+        createDebug.namespaces = namespaces;
+        createDebug.names = [];
+        createDebug.skips = [];
+        const split = (typeof namespaces === "string" ? namespaces : "").trim().replace(/\s+/g, ",").split(",").filter(Boolean);
+        for (const ns of split) {
+          if (ns[0] === "-") {
+            createDebug.skips.push(ns.slice(1));
+          } else {
+            createDebug.names.push(ns);
+          }
+        }
+      }
+      function matchesTemplate(search, template) {
+        let searchIndex = 0;
+        let templateIndex = 0;
+        let starIndex = -1;
+        let matchIndex = 0;
+        while (searchIndex < search.length) {
+          if (templateIndex < template.length && (template[templateIndex] === search[searchIndex] || template[templateIndex] === "*")) {
+            if (template[templateIndex] === "*") {
+              starIndex = templateIndex;
+              matchIndex = searchIndex;
+              templateIndex++;
+            } else {
+              searchIndex++;
+              templateIndex++;
+            }
+          } else if (starIndex !== -1) {
+            templateIndex = starIndex + 1;
+            matchIndex++;
+            searchIndex = matchIndex;
+          } else {
+            return false;
+          }
+        }
+        while (templateIndex < template.length && template[templateIndex] === "*") {
+          templateIndex++;
+        }
+        return templateIndex === template.length;
+      }
+      function disable() {
+        const namespaces = [
+          ...createDebug.names,
+          ...createDebug.skips.map((namespace) => "-" + namespace)
+        ].join(",");
+        createDebug.enable("");
+        return namespaces;
+      }
+      function enabled(name) {
+        for (const skip of createDebug.skips) {
+          if (matchesTemplate(name, skip)) {
+            return false;
+          }
+        }
+        for (const ns of createDebug.names) {
+          if (matchesTemplate(name, ns)) {
+            return true;
+          }
+        }
+        return false;
+      }
+      function coerce(val) {
+        if (val instanceof Error) {
+          return val.stack || val.message;
+        }
+        return val;
+      }
+      function destroy() {
+        console.warn("Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.");
+      }
+      createDebug.enable(createDebug.load());
+      return createDebug;
+    }
+    module2.exports = setup;
+  }
+});
+
+// node_modules/debug/src/browser.js
+var require_browser = __commonJS({
+  "node_modules/debug/src/browser.js"(exports, module2) {
+    exports.formatArgs = formatArgs;
+    exports.save = save;
+    exports.load = load;
+    exports.useColors = useColors;
+    exports.storage = localstorage();
+    exports.destroy = /* @__PURE__ */ (() => {
+      let warned = false;
+      return () => {
+        if (!warned) {
+          warned = true;
+          console.warn("Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.");
+        }
+      };
+    })();
+    exports.colors = [
+      "#0000CC",
+      "#0000FF",
+      "#0033CC",
+      "#0033FF",
+      "#0066CC",
+      "#0066FF",
+      "#0099CC",
+      "#0099FF",
+      "#00CC00",
+      "#00CC33",
+      "#00CC66",
+      "#00CC99",
+      "#00CCCC",
+      "#00CCFF",
+      "#3300CC",
+      "#3300FF",
+      "#3333CC",
+      "#3333FF",
+      "#3366CC",
+      "#3366FF",
+      "#3399CC",
+      "#3399FF",
+      "#33CC00",
+      "#33CC33",
+      "#33CC66",
+      "#33CC99",
+      "#33CCCC",
+      "#33CCFF",
+      "#6600CC",
+      "#6600FF",
+      "#6633CC",
+      "#6633FF",
+      "#66CC00",
+      "#66CC33",
+      "#9900CC",
+      "#9900FF",
+      "#9933CC",
+      "#9933FF",
+      "#99CC00",
+      "#99CC33",
+      "#CC0000",
+      "#CC0033",
+      "#CC0066",
+      "#CC0099",
+      "#CC00CC",
+      "#CC00FF",
+      "#CC3300",
+      "#CC3333",
+      "#CC3366",
+      "#CC3399",
+      "#CC33CC",
+      "#CC33FF",
+      "#CC6600",
+      "#CC6633",
+      "#CC9900",
+      "#CC9933",
+      "#CCCC00",
+      "#CCCC33",
+      "#FF0000",
+      "#FF0033",
+      "#FF0066",
+      "#FF0099",
+      "#FF00CC",
+      "#FF00FF",
+      "#FF3300",
+      "#FF3333",
+      "#FF3366",
+      "#FF3399",
+      "#FF33CC",
+      "#FF33FF",
+      "#FF6600",
+      "#FF6633",
+      "#FF9900",
+      "#FF9933",
+      "#FFCC00",
+      "#FFCC33"
+    ];
+    function useColors() {
+      if (typeof window !== "undefined" && window.process && (window.process.type === "renderer" || window.process.__nwjs)) {
+        return true;
+      }
+      if (typeof navigator !== "undefined" && navigator.userAgent && navigator.userAgent.toLowerCase().match(/(edge|trident)\/(\d+)/)) {
+        return false;
+      }
+      let m;
+      return typeof document !== "undefined" && document.documentElement && document.documentElement.style && document.documentElement.style.WebkitAppearance || // Is firebug? http://stackoverflow.com/a/398120/376773
+      typeof window !== "undefined" && window.console && (window.console.firebug || window.console.exception && window.console.table) || // Is firefox >= v31?
+      // https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages
+      typeof navigator !== "undefined" && navigator.userAgent && (m = navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/)) && parseInt(m[1], 10) >= 31 || // Double check webkit in userAgent just in case we are in a worker
+      typeof navigator !== "undefined" && navigator.userAgent && navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/);
+    }
+    function formatArgs(args) {
+      args[0] = (this.useColors ? "%c" : "") + this.namespace + (this.useColors ? " %c" : " ") + args[0] + (this.useColors ? "%c " : " ") + "+" + module2.exports.humanize(this.diff);
+      if (!this.useColors) {
+        return;
+      }
+      const c = "color: " + this.color;
+      args.splice(1, 0, c, "color: inherit");
+      let index = 0;
+      let lastC = 0;
+      args[0].replace(/%[a-zA-Z%]/g, (match) => {
+        if (match === "%%") {
+          return;
+        }
+        index++;
+        if (match === "%c") {
+          lastC = index;
+        }
+      });
+      args.splice(lastC, 0, c);
+    }
+    exports.log = console.debug || console.log || (() => {
+    });
+    function save(namespaces) {
+      try {
+        if (namespaces) {
+          exports.storage.setItem("debug", namespaces);
+        } else {
+          exports.storage.removeItem("debug");
+        }
+      } catch (error) {
+      }
+    }
+    function load() {
+      let r;
+      try {
+        r = exports.storage.getItem("debug") || exports.storage.getItem("DEBUG");
+      } catch (error) {
+      }
+      if (!r && typeof process !== "undefined" && "env" in process) {
+        r = process.env.DEBUG;
+      }
+      return r;
+    }
+    function localstorage() {
+      try {
+        return localStorage;
+      } catch (error) {
+      }
+    }
+    module2.exports = require_common2()(exports);
+    var { formatters } = module2.exports;
+    formatters.j = function(v) {
+      try {
+        return JSON.stringify(v);
+      } catch (error) {
+        return "[UnexpectedJSONParseError]: " + error.message;
+      }
+    };
+  }
+});
+
 // node_modules/socks-proxy-agent/dist/index.js
-var require_dist4 = __commonJS({
+var require_dist2 = __commonJS({
   "node_modules/socks-proxy-agent/dist/index.js"(exports) {
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
@@ -5735,7 +5359,7 @@ var require_dist4 = __commonJS({
       }
       return { lookup, proxy };
     }
-    var SocksProxyAgent2 = class extends agent_base_1.Agent {
+    var SocksProxyAgent = class extends agent_base_1.Agent {
       constructor(uri, opts) {
         super(opts);
         const url = typeof uri === "string" ? new url_1.URL(uri) : uri;
@@ -5807,14 +5431,390 @@ var require_dist4 = __commonJS({
         return socket;
       }
     };
-    SocksProxyAgent2.protocols = [
+    SocksProxyAgent.protocols = [
       "socks",
       "socks4",
       "socks4a",
       "socks5",
       "socks5h"
     ];
-    exports.SocksProxyAgent = SocksProxyAgent2;
+    exports.SocksProxyAgent = SocksProxyAgent;
+    function omit(obj, ...keys) {
+      const ret = {};
+      let key;
+      for (key in obj) {
+        if (!keys.includes(key)) {
+          ret[key] = obj[key];
+        }
+      }
+      return ret;
+    }
+  }
+});
+
+// node_modules/https-proxy-agent/dist/parse-proxy-response.js
+var require_parse_proxy_response = __commonJS({
+  "node_modules/https-proxy-agent/dist/parse-proxy-response.js"(exports) {
+    "use strict";
+    var __importDefault = exports && exports.__importDefault || function(mod) {
+      return mod && mod.__esModule ? mod : { "default": mod };
+    };
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.parseProxyResponse = void 0;
+    var debug_1 = __importDefault(require_browser());
+    var debug = (0, debug_1.default)("https-proxy-agent:parse-proxy-response");
+    function parseProxyResponse(socket) {
+      return new Promise((resolve, reject) => {
+        let buffersLength = 0;
+        const buffers = [];
+        function read() {
+          const b = socket.read();
+          if (b)
+            ondata(b);
+          else
+            socket.once("readable", read);
+        }
+        function cleanup() {
+          socket.removeListener("end", onend);
+          socket.removeListener("error", onerror);
+          socket.removeListener("readable", read);
+        }
+        function onend() {
+          cleanup();
+          debug("onend");
+          reject(new Error("Proxy connection ended before receiving CONNECT response"));
+        }
+        function onerror(err) {
+          cleanup();
+          debug("onerror %o", err);
+          reject(err);
+        }
+        function ondata(b) {
+          buffers.push(b);
+          buffersLength += b.length;
+          const buffered = Buffer.concat(buffers, buffersLength);
+          const endOfHeaders = buffered.indexOf("\r\n\r\n");
+          if (endOfHeaders === -1) {
+            debug("have not received end of HTTP headers yet...");
+            read();
+            return;
+          }
+          const headerParts = buffered.slice(0, endOfHeaders).toString("ascii").split("\r\n");
+          const firstLine = headerParts.shift();
+          if (!firstLine) {
+            socket.destroy();
+            return reject(new Error("No header received from proxy CONNECT response"));
+          }
+          const firstLineParts = firstLine.split(" ");
+          const statusCode = +firstLineParts[1];
+          const statusText = firstLineParts.slice(2).join(" ");
+          const headers = {};
+          for (const header of headerParts) {
+            if (!header)
+              continue;
+            const firstColon = header.indexOf(":");
+            if (firstColon === -1) {
+              socket.destroy();
+              return reject(new Error(`Invalid header from proxy CONNECT response: "${header}"`));
+            }
+            const key = header.slice(0, firstColon).toLowerCase();
+            const value = header.slice(firstColon + 1).trimStart();
+            const current = headers[key];
+            if (typeof current === "string") {
+              headers[key] = [current, value];
+            } else if (Array.isArray(current)) {
+              current.push(value);
+            } else {
+              headers[key] = value;
+            }
+          }
+          debug("got proxy server response: %o %o", firstLine, headers);
+          cleanup();
+          resolve({
+            connect: {
+              statusCode,
+              statusText,
+              headers
+            },
+            buffered
+          });
+        }
+        socket.on("error", onerror);
+        socket.on("end", onend);
+        read();
+      });
+    }
+    exports.parseProxyResponse = parseProxyResponse;
+  }
+});
+
+// node_modules/https-proxy-agent/dist/index.js
+var require_dist3 = __commonJS({
+  "node_modules/https-proxy-agent/dist/index.js"(exports) {
+    "use strict";
+    var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
+      if (k2 === void 0) k2 = k;
+      var desc = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+        desc = { enumerable: true, get: function() {
+          return m[k];
+        } };
+      }
+      Object.defineProperty(o, k2, desc);
+    }) : (function(o, m, k, k2) {
+      if (k2 === void 0) k2 = k;
+      o[k2] = m[k];
+    }));
+    var __setModuleDefault = exports && exports.__setModuleDefault || (Object.create ? (function(o, v) {
+      Object.defineProperty(o, "default", { enumerable: true, value: v });
+    }) : function(o, v) {
+      o["default"] = v;
+    });
+    var __importStar = exports && exports.__importStar || function(mod) {
+      if (mod && mod.__esModule) return mod;
+      var result = {};
+      if (mod != null) {
+        for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+      }
+      __setModuleDefault(result, mod);
+      return result;
+    };
+    var __importDefault = exports && exports.__importDefault || function(mod) {
+      return mod && mod.__esModule ? mod : { "default": mod };
+    };
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.HttpsProxyAgent = void 0;
+    var net = __importStar(require("net"));
+    var tls = __importStar(require("tls"));
+    var assert_1 = __importDefault(require("assert"));
+    var debug_1 = __importDefault(require_browser());
+    var agent_base_1 = require_dist();
+    var url_1 = require("url");
+    var parse_proxy_response_1 = require_parse_proxy_response();
+    var debug = (0, debug_1.default)("https-proxy-agent");
+    var setServernameFromNonIpHost = (options) => {
+      if (options.servername === void 0 && options.host && !net.isIP(options.host)) {
+        return {
+          ...options,
+          servername: options.host
+        };
+      }
+      return options;
+    };
+    var HttpsProxyAgent = class extends agent_base_1.Agent {
+      constructor(proxy, opts) {
+        super(opts);
+        this.options = { path: void 0 };
+        this.proxy = typeof proxy === "string" ? new url_1.URL(proxy) : proxy;
+        this.proxyHeaders = opts?.headers ?? {};
+        debug("Creating new HttpsProxyAgent instance: %o", this.proxy.href);
+        const host = (this.proxy.hostname || this.proxy.host).replace(/^\[|\]$/g, "");
+        const port = this.proxy.port ? parseInt(this.proxy.port, 10) : this.proxy.protocol === "https:" ? 443 : 80;
+        this.connectOpts = {
+          // Attempt to negotiate http/1.1 for proxy servers that support http/2
+          ALPNProtocols: ["http/1.1"],
+          ...opts ? omit(opts, "headers") : null,
+          host,
+          port
+        };
+      }
+      /**
+       * Called when the node-core HTTP client library is creating a
+       * new HTTP request.
+       */
+      async connect(req, opts) {
+        const { proxy } = this;
+        if (!opts.host) {
+          throw new TypeError('No "host" provided');
+        }
+        let socket;
+        if (proxy.protocol === "https:") {
+          debug("Creating `tls.Socket`: %o", this.connectOpts);
+          socket = tls.connect(setServernameFromNonIpHost(this.connectOpts));
+        } else {
+          debug("Creating `net.Socket`: %o", this.connectOpts);
+          socket = net.connect(this.connectOpts);
+        }
+        const headers = typeof this.proxyHeaders === "function" ? this.proxyHeaders() : { ...this.proxyHeaders };
+        const host = net.isIPv6(opts.host) ? `[${opts.host}]` : opts.host;
+        let payload = `CONNECT ${host}:${opts.port} HTTP/1.1\r
+`;
+        if (proxy.username || proxy.password) {
+          const auth = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
+          headers["Proxy-Authorization"] = `Basic ${Buffer.from(auth).toString("base64")}`;
+        }
+        headers.Host = `${host}:${opts.port}`;
+        if (!headers["Proxy-Connection"]) {
+          headers["Proxy-Connection"] = this.keepAlive ? "Keep-Alive" : "close";
+        }
+        for (const name of Object.keys(headers)) {
+          payload += `${name}: ${headers[name]}\r
+`;
+        }
+        const proxyResponsePromise = (0, parse_proxy_response_1.parseProxyResponse)(socket);
+        socket.write(`${payload}\r
+`);
+        const { connect, buffered } = await proxyResponsePromise;
+        req.emit("proxyConnect", connect);
+        this.emit("proxyConnect", connect, req);
+        if (connect.statusCode === 200) {
+          req.once("socket", resume);
+          if (opts.secureEndpoint) {
+            debug("Upgrading socket connection to TLS");
+            return tls.connect({
+              ...omit(setServernameFromNonIpHost(opts), "host", "path", "port"),
+              socket
+            });
+          }
+          return socket;
+        }
+        socket.destroy();
+        const fakeSocket = new net.Socket({ writable: false });
+        fakeSocket.readable = true;
+        req.once("socket", (s) => {
+          debug("Replaying proxy buffer for failed request");
+          (0, assert_1.default)(s.listenerCount("data") > 0);
+          s.push(buffered);
+          s.push(null);
+        });
+        return fakeSocket;
+      }
+    };
+    HttpsProxyAgent.protocols = ["http", "https"];
+    exports.HttpsProxyAgent = HttpsProxyAgent;
+    function resume(socket) {
+      socket.resume();
+    }
+    function omit(obj, ...keys) {
+      const ret = {};
+      let key;
+      for (key in obj) {
+        if (!keys.includes(key)) {
+          ret[key] = obj[key];
+        }
+      }
+      return ret;
+    }
+  }
+});
+
+// node_modules/http-proxy-agent/dist/index.js
+var require_dist4 = __commonJS({
+  "node_modules/http-proxy-agent/dist/index.js"(exports) {
+    "use strict";
+    var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
+      if (k2 === void 0) k2 = k;
+      var desc = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+        desc = { enumerable: true, get: function() {
+          return m[k];
+        } };
+      }
+      Object.defineProperty(o, k2, desc);
+    }) : (function(o, m, k, k2) {
+      if (k2 === void 0) k2 = k;
+      o[k2] = m[k];
+    }));
+    var __setModuleDefault = exports && exports.__setModuleDefault || (Object.create ? (function(o, v) {
+      Object.defineProperty(o, "default", { enumerable: true, value: v });
+    }) : function(o, v) {
+      o["default"] = v;
+    });
+    var __importStar = exports && exports.__importStar || function(mod) {
+      if (mod && mod.__esModule) return mod;
+      var result = {};
+      if (mod != null) {
+        for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+      }
+      __setModuleDefault(result, mod);
+      return result;
+    };
+    var __importDefault = exports && exports.__importDefault || function(mod) {
+      return mod && mod.__esModule ? mod : { "default": mod };
+    };
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.HttpProxyAgent = void 0;
+    var net = __importStar(require("net"));
+    var tls = __importStar(require("tls"));
+    var debug_1 = __importDefault(require_browser());
+    var events_1 = require("events");
+    var agent_base_1 = require_dist();
+    var url_1 = require("url");
+    var debug = (0, debug_1.default)("http-proxy-agent");
+    var HttpProxyAgent = class extends agent_base_1.Agent {
+      constructor(proxy, opts) {
+        super(opts);
+        this.proxy = typeof proxy === "string" ? new url_1.URL(proxy) : proxy;
+        this.proxyHeaders = opts?.headers ?? {};
+        debug("Creating new HttpProxyAgent instance: %o", this.proxy.href);
+        const host = (this.proxy.hostname || this.proxy.host).replace(/^\[|\]$/g, "");
+        const port = this.proxy.port ? parseInt(this.proxy.port, 10) : this.proxy.protocol === "https:" ? 443 : 80;
+        this.connectOpts = {
+          ...opts ? omit(opts, "headers") : null,
+          host,
+          port
+        };
+      }
+      addRequest(req, opts) {
+        req._header = null;
+        this.setRequestProps(req, opts);
+        super.addRequest(req, opts);
+      }
+      setRequestProps(req, opts) {
+        const { proxy } = this;
+        const protocol = opts.secureEndpoint ? "https:" : "http:";
+        const hostname = req.getHeader("host") || "localhost";
+        const base = `${protocol}//${hostname}`;
+        const url = new url_1.URL(req.path, base);
+        if (opts.port !== 80) {
+          url.port = String(opts.port);
+        }
+        req.path = String(url);
+        const headers = typeof this.proxyHeaders === "function" ? this.proxyHeaders() : { ...this.proxyHeaders };
+        if (proxy.username || proxy.password) {
+          const auth = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
+          headers["Proxy-Authorization"] = `Basic ${Buffer.from(auth).toString("base64")}`;
+        }
+        if (!headers["Proxy-Connection"]) {
+          headers["Proxy-Connection"] = this.keepAlive ? "Keep-Alive" : "close";
+        }
+        for (const name of Object.keys(headers)) {
+          const value = headers[name];
+          if (value) {
+            req.setHeader(name, value);
+          }
+        }
+      }
+      async connect(req, opts) {
+        req._header = null;
+        if (!req.path.includes("://")) {
+          this.setRequestProps(req, opts);
+        }
+        let first;
+        let endOfHeaders;
+        debug("Regenerating stored HTTP header string for request");
+        req._implicitHeader();
+        if (req.outputData && req.outputData.length > 0) {
+          debug("Patching connection write() output buffer with updated header");
+          first = req.outputData[0].data;
+          endOfHeaders = first.indexOf("\r\n\r\n") + 4;
+          req.outputData[0].data = req._header + first.substring(endOfHeaders);
+          debug("Output buffer: %o", req.outputData[0].data);
+        }
+        let socket;
+        if (this.proxy.protocol === "https:") {
+          debug("Creating `tls.Socket`: %o", this.connectOpts);
+          socket = tls.connect(this.connectOpts);
+        } else {
+          debug("Creating `net.Socket`: %o", this.connectOpts);
+          socket = net.connect(this.connectOpts);
+        }
+        await (0, events_1.once)(socket, "connect");
+        return socket;
+      }
+    };
+    HttpProxyAgent.protocols = ["http", "https"];
+    exports.HttpProxyAgent = HttpProxyAgent;
     function omit(obj, ...keys) {
       const ret = {};
       let key;
@@ -5835,12 +5835,6 @@ __export(main_exports, {
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
-var http = __toESM(require("http"));
-var https = __toESM(require("https"));
-var import_url = require("url");
-var import_http_proxy_agent = __toESM(require_dist2());
-var import_https_proxy_agent = __toESM(require_dist3());
-var import_socks_proxy_agent = __toESM(require_dist4());
 var DEFAULT_DATA = {
   serverUrl: "",
   username: "",
@@ -5851,7 +5845,7 @@ var DEFAULT_DATA = {
   syncIntervalMinutes: 10,
   syncOnStartup: false,
   requestTimeoutSeconds: 60,
-  excludes: ".obsidian/**\n.trash/**\n**/.DS_Store\n**/Thumbs.db",
+  excludes: ".trash/**\n**/.DS_Store\n**/Thumbs.db",
   logs: [],
   syncStateVersion: 2,
   syncState: {}
@@ -5860,7 +5854,7 @@ var WebDavClient = class {
   constructor(settings) {
     this.settings = settings;
     if (!settings.serverUrl.trim()) throw new Error("\u8BF7\u5148\u586B\u5199 WebDAV \u5730\u5740");
-    this.baseUrl = new import_url.URL(settings.serverUrl.trim().replace(/\/+$/, "") + "/");
+    this.baseUrl = new URL(settings.serverUrl.trim().replace(/\/+$/, "") + "/");
     this.remoteRoot = cleanPath(settings.remoteFolder);
   }
   async test() {
@@ -5874,12 +5868,12 @@ var WebDavClient = class {
   async list() {
     await this.ensureRoot();
     const response = await this.propfind("", "infinity");
-    return this.parsePropfind(response.body.toString("utf8"));
+    return this.parsePropfind(new TextDecoder().decode(response.body));
   }
   async stat(path) {
     try {
       const response = await this.propfind(path, "0");
-      return this.parsePropfind(response.body.toString("utf8")).get(cleanPath(path)) ?? null;
+      return this.parsePropfind(new TextDecoder().decode(response.body)).get(cleanPath(path)) ?? null;
     } catch (error) {
       if (error instanceof Error && error.message.includes("HTTP 404")) return null;
       throw error;
@@ -5887,10 +5881,7 @@ var WebDavClient = class {
   }
   async download(path) {
     const response = await this.request("GET", path);
-    const data = response.body.buffer.slice(
-      response.body.byteOffset,
-      response.body.byteOffset + response.body.byteLength
-    );
+    const data = response.body;
     const item = await this.stat(path);
     if (!item) throw new Error(`\u4E0B\u8F7D\u540E\u65E0\u6CD5\u8BFB\u53D6\u8FDC\u7A0B\u6587\u4EF6\u4FE1\u606F\uFF1A${path}`);
     return { data, item };
@@ -5899,7 +5890,7 @@ var WebDavClient = class {
     const normalized = cleanPath(path);
     const parent = normalized.split("/").slice(0, -1).join("/");
     if (parent) await this.ensureDirectory(parent);
-    await this.request("PUT", normalized, Buffer.from(data), {
+    await this.request("PUT", normalized, data, {
       "Content-Type": "application/octet-stream"
     });
     const item = await this.stat(normalized);
@@ -5937,7 +5928,7 @@ var WebDavClient = class {
       <d:propfind xmlns:d="DAV:">
         <d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getetag/></d:prop>
       </d:propfind>`;
-    return this.request("PROPFIND", path, Buffer.from(body), {
+    return this.request("PROPFIND", path, body, {
       Depth: depth,
       "Content-Type": "application/xml; charset=utf-8"
     });
@@ -5952,7 +5943,7 @@ var WebDavClient = class {
       const href = node.getElementsByTagNameNS("DAV:", "href")[0]?.textContent ?? "";
       let pathname;
       try {
-        pathname = decodeURIComponent(new import_url.URL(href, this.baseUrl).pathname).replace(/\/+$/, "");
+        pathname = decodeURIComponent(new URL(href, this.baseUrl).pathname).replace(/\/+$/, "");
       } catch {
         continue;
       }
@@ -5974,7 +5965,7 @@ var WebDavClient = class {
     return result;
   }
   rootUrl() {
-    const url = new import_url.URL(this.baseUrl.toString());
+    const url = new URL(this.baseUrl.toString());
     const suffix = this.remoteRoot ? encodePath(this.remoteRoot) + "/" : "";
     url.pathname = url.pathname.replace(/\/+$/, "/") + suffix;
     return url;
@@ -5985,63 +5976,105 @@ var WebDavClient = class {
     if (path) url.pathname = url.pathname.replace(/\/+$/, "/") + encodePath(path);
     return url;
   }
-  makeAgent(target) {
-    const proxy = this.settings.proxyUrl.trim();
-    if (!proxy) {
-      if (target.protocol === "https:") {
-        return new https.Agent({ rejectUnauthorized: this.settings.rejectUnauthorized });
-      }
-      return void 0;
-    }
-    if (/^socks/i.test(proxy)) return new import_socks_proxy_agent.SocksProxyAgent(proxy);
-    if (target.protocol === "https:") {
-      return new import_https_proxy_agent.HttpsProxyAgent(proxy, { rejectUnauthorized: this.settings.rejectUnauthorized });
-    }
-    return new import_http_proxy_agent.HttpProxyAgent(proxy);
-  }
-  request(method, path, body, extraHeaders = {}) {
+  async request(method, path, body, extraHeaders = {}) {
     const target = this.urlFor(path);
-    const transport = target.protocol === "https:" ? https : http;
-    const authorization = Buffer.from(`${this.settings.username}:${this.settings.password}`).toString("base64");
+    if (import_obsidian.Platform.isMobileApp || !this.settings.proxyUrl.trim() && this.settings.rejectUnauthorized) {
+      return this.requestPortable(method, target, body, extraHeaders);
+    }
+    return this.requestDesktop(method, target, body, extraHeaders);
+  }
+  async requestPortable(method, target, body, extraHeaders = {}) {
     const headers = {
-      Authorization: `Basic ${authorization}`,
-      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.2.2",
+      Authorization: `Basic ${basicAuth(this.settings.username, this.settings.password)}`,
       ...extraHeaders
     };
-    if (body) headers["Content-Length"] = body.byteLength;
+    const timeoutMs = Math.max(5, this.settings.requestTimeoutSeconds) * 1e3;
+    const response = await withTimeout(
+      (0, import_obsidian.requestUrl)({
+        url: target.toString(),
+        method,
+        headers,
+        body,
+        throw: false
+      }),
+      timeoutMs
+    );
+    const result = {
+      status: response.status,
+      headers: response.headers,
+      body: response.arrayBuffer
+    };
+    this.throwForStatus(result.status, method, target);
+    return result;
+  }
+  async requestDesktop(method, target, body, extraHeaders = {}) {
+    const [{ default: http }, { default: https }] = await Promise.all([
+      import("node:http"),
+      import("node:https")
+    ]);
+    const proxy = this.settings.proxyUrl.trim();
+    let agent;
+    if (!proxy) {
+      agent = target.protocol === "https:" ? new https.Agent({ rejectUnauthorized: this.settings.rejectUnauthorized }) : void 0;
+    } else if (/^socks/i.test(proxy)) {
+      const { SocksProxyAgent } = await Promise.resolve().then(() => __toESM(require_dist2()));
+      agent = new SocksProxyAgent(proxy);
+    } else if (target.protocol === "https:") {
+      const { HttpsProxyAgent } = await Promise.resolve().then(() => __toESM(require_dist3()));
+      agent = new HttpsProxyAgent(proxy, { rejectUnauthorized: this.settings.rejectUnauthorized });
+    } else {
+      const { HttpProxyAgent } = await Promise.resolve().then(() => __toESM(require_dist4()));
+      agent = new HttpProxyAgent(proxy);
+    }
+    const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body ? new Uint8Array(body) : void 0;
+    const headers = {
+      Authorization: `Basic ${basicAuth(this.settings.username, this.settings.password)}`,
+      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.3.0",
+      ...extraHeaders
+    };
+    if (bytes) headers["Content-Length"] = bytes.byteLength;
+    const transport = target.protocol === "https:" ? https : http;
     return new Promise((resolve, reject) => {
-      const request = transport.request(
-        target,
-        {
-          method,
-          headers,
-          agent: this.makeAgent(target),
-          timeout: Math.max(5, this.settings.requestTimeoutSeconds) * 1e3,
-          rejectUnauthorized: this.settings.rejectUnauthorized
-        },
-        (response) => {
-          const chunks = [];
-          response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-          response.on("end", () => {
-            const result = {
-              status: response.statusCode ?? 0,
-              headers: response.headers,
-              body: Buffer.concat(chunks)
-            };
-            if (result.status >= 200 && result.status < 300) {
-              resolve(result);
-              return;
-            }
-            const hint = result.status === 401 ? "\uFF08\u8BF7\u68C0\u67E5\u7528\u6237\u540D\u548C\u5BC6\u7801\uFF09" : result.status === 405 ? "\uFF08\u8BF7\u68C0\u67E5 WebDAV \u5730\u5740\uFF1BOpenList \u901A\u5E38\u4EE5 /dav \u7ED3\u5C3E\uFF09" : "";
-            reject(new Error(`HTTP ${result.status} ${method} ${target.pathname} ${hint}`));
-          });
-        }
-      );
-      request.on("timeout", () => request.destroy(new Error("\u8FDE\u63A5\u8D85\u65F6")));
-      request.on("error", reject);
-      if (body) request.write(body);
-      request.end();
+      const req = transport.request(target, {
+        method,
+        headers,
+        agent,
+        timeout: Math.max(5, this.settings.requestTimeoutSeconds) * 1e3,
+        rejectUnauthorized: this.settings.rejectUnauthorized
+      }, (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(new Uint8Array(chunk)));
+        response.on("end", () => {
+          const length = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+          const combined = new Uint8Array(length);
+          let offset = 0;
+          for (const chunk of chunks) {
+            combined.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          const result = {
+            status: response.statusCode ?? 0,
+            headers: response.headers,
+            body: combined.buffer
+          };
+          try {
+            this.throwForStatus(result.status, method, target);
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+      req.on("timeout", () => req.destroy(new Error("\u8FDE\u63A5\u8D85\u65F6")));
+      req.on("error", reject);
+      if (bytes) req.write(bytes);
+      req.end();
     });
+  }
+  throwForStatus(status, method, target) {
+    if (status >= 200 && status < 300) return;
+    const hint = status === 401 ? "\uFF08\u8BF7\u68C0\u67E5\u7528\u6237\u540D\u548C\u5BC6\u7801\uFF09" : status === 405 ? "\uFF08\u670D\u52A1\u5668\u62D2\u7EDD\u4E86\u8BE5 WebDAV \u64CD\u4F5C\uFF0C\u8BF7\u68C0\u67E5\u8DEF\u5F84\u3001\u6743\u9650\u6216\u540C\u540D\u51B2\u7A81\uFF09" : "";
+    throw new Error(`HTTP ${status} ${method} ${target.pathname} ${hint}`);
   }
 };
 var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
@@ -6110,7 +6143,6 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
       await this.saveData(this.data);
       new import_obsidian.Notice(`WebDAV \u8FDE\u63A5\u5931\u8D25\uFF1A${message}\u3002\u53EF\u5728\u547D\u4EE4\u9762\u677F\u4E2D\u6253\u5F00\u201C\u67E5\u770B\u540C\u6B65\u65E5\u5FD7\u201D\u3002`, 1e4);
       this.setStatus(`WebDAV\uFF1A\u8FDE\u63A5\u5931\u8D25 \xB7 ${message}`);
-      console.error("WebDAV connection test failed", error);
     }
   }
   async runSync(showNotice) {
@@ -6237,7 +6269,6 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
       await this.saveData(this.data);
       this.setStatus(`WebDAV\uFF1A\u540C\u6B65\u5931\u8D25 \xB7 ${message}`);
       new import_obsidian.Notice(`WebDAV \u540C\u6B65\u5931\u8D25\uFF1A${message}${location}\u3002\u53EF\u6253\u5F00\u201C\u67E5\u770B\u540C\u6B65\u65E5\u5FD7\u201D\u67E5\u770B\u8BE6\u60C5\u3002`, 12e3);
-      console.error("WebDAV sync failed", error);
     } finally {
       this.syncing = false;
     }
@@ -6284,6 +6315,8 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
     };
   }
   isExcluded(path) {
+    const configDir = cleanPath(this.app.vault.configDir);
+    if (path === configDir || path.startsWith(`${configDir}/`)) return true;
     const patterns = this.data.excludes.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
     return patterns.some((pattern) => globMatches(path, pattern));
   }
@@ -6308,9 +6341,6 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
     const line = `${(/* @__PURE__ */ new Date()).toLocaleString()} [${level}] ${message}`;
     this.data.logs.push(line);
     if (this.data.logs.length > 300) this.data.logs.splice(0, this.data.logs.length - 300);
-    if (level === "ERROR") console.error(line);
-    else if (level === "WARN") console.warn(line);
-    else console.info(line);
   }
   setStatus(text) {
     if (this.statusBar) {
@@ -6352,10 +6382,13 @@ var WebDavProxySyncSettingTab = class extends import_obsidian.PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
+  getSettingDefinitions() {
+    return [];
+  }
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "WebDAV \u4EE3\u7406\u540C\u6B65" });
+    new import_obsidian.Setting(containerEl).setName("WebDAV \u4EE3\u7406\u540C\u6B65").setHeading();
     containerEl.createEl("p", {
       text: "\u4EC5\u652F\u6301\u684C\u9762\u7248\u3002\u5BC6\u7801\u4FDD\u5B58\u5728\u672C\u5730\u63D2\u4EF6\u914D\u7F6E\u4E2D\uFF0C\u8BF7\u786E\u4FDD\u8BBE\u5907\u53EF\u4FE1\u3002\u9996\u6B21\u6B63\u5F0F\u540C\u6B65\u524D\u5EFA\u8BAE\u5907\u4EFD\u4ED3\u5E93\u3002",
       cls: "webdav-proxy-sync-status"
@@ -6379,11 +6412,11 @@ var WebDavProxySyncSettingTab = class extends import_obsidian.PluginSettingTab {
       this.plugin.data.remoteFolder = cleanPath(value);
       await this.plugin.saveSettings();
     }));
-    new import_obsidian.Setting(containerEl).setName("\u4EE3\u7406\u5730\u5740").setDesc("\u652F\u6301 http://\u3001https://\u3001socks5:// \u548C socks5h://\uFF1B\u7559\u7A7A\u8868\u793A\u76F4\u8FDE").addText((text) => text.setPlaceholder("socks5h://127.0.0.1:7890").setValue(this.plugin.data.proxyUrl).onChange(async (value) => {
+    new import_obsidian.Setting(containerEl).setName("\u4EE3\u7406\u5730\u5740").setDesc(import_obsidian.Platform.isMobileApp ? "\u79FB\u52A8\u7AEF\u4F7F\u7528\u7CFB\u7EDF\u7F51\u7EDC\uFF0C\u63D2\u4EF6\u5185\u4EE3\u7406\u8BBE\u7F6E\u4EC5\u5728\u684C\u9762\u7AEF\u751F\u6548" : "\u652F\u6301 http://\u3001https://\u3001socks5:// \u548C socks5h://\uFF1B\u7559\u7A7A\u8868\u793A\u76F4\u8FDE").addText((text) => text.setDisabled(import_obsidian.Platform.isMobileApp).setPlaceholder("socks5h://127.0.0.1:7890").setValue(this.plugin.data.proxyUrl).onChange(async (value) => {
       this.plugin.data.proxyUrl = value.trim();
       await this.plugin.saveSettings();
     }));
-    new import_obsidian.Setting(containerEl).setName("\u9A8C\u8BC1 HTTPS \u8BC1\u4E66").setDesc("\u5EFA\u8BAE\u4FDD\u6301\u5F00\u542F\uFF1B\u4EC5\u5728\u4F7F\u7528\u53EF\u4FE1\u7684\u81EA\u7B7E\u540D\u8BC1\u4E66\u65F6\u5173\u95ED").addToggle((toggle) => toggle.setValue(this.plugin.data.rejectUnauthorized).onChange(async (value) => {
+    new import_obsidian.Setting(containerEl).setName("\u9A8C\u8BC1 HTTPS \u8BC1\u4E66").setDesc("\u5EFA\u8BAE\u4FDD\u6301\u5F00\u542F\uFF1B\u4EC5\u5728\u4F7F\u7528\u53EF\u4FE1\u7684\u81EA\u7B7E\u540D\u8BC1\u4E66\u65F6\u5173\u95ED").addToggle((toggle) => toggle.setDisabled(import_obsidian.Platform.isMobileApp).setValue(this.plugin.data.rejectUnauthorized).onChange(async (value) => {
       this.plugin.data.rejectUnauthorized = value;
       await this.plugin.saveSettings();
     }));
@@ -6401,7 +6434,7 @@ var WebDavProxySyncSettingTab = class extends import_obsidian.PluginSettingTab {
       this.plugin.data.syncOnStartup = value;
       await this.plugin.saveSettings();
     }));
-    const excludes = new import_obsidian.Setting(containerEl).setName("\u6392\u9664\u89C4\u5219").setDesc("\u6BCF\u884C\u4E00\u6761\u7B80\u5355 glob \u89C4\u5219\uFF1B\u9ED8\u8BA4\u4E0D\u540C\u6B65 .obsidian \u548C\u56DE\u6536\u7AD9").setClass("webdav-proxy-sync-setting");
+    const excludes = new import_obsidian.Setting(containerEl).setName("\u6392\u9664\u89C4\u5219").setDesc("\u6BCF\u884C\u4E00\u6761\u7B80\u5355 glob \u89C4\u5219\uFF1B\u9ED8\u8BA4\u4E0D\u540C\u6B65\u5F53\u524D\u4ED3\u5E93\u914D\u7F6E\u76EE\u5F55\u548C\u56DE\u6536\u7AD9").setClass("webdav-proxy-sync-setting");
     excludes.addTextArea((text) => text.setValue(this.plugin.data.excludes).onChange(async (value) => {
       this.plugin.data.excludes = value;
       await this.plugin.saveSettings();
@@ -6424,8 +6457,38 @@ function signatureRemote(item) {
   return item.etag ? `etag:${item.etag}` : `${item.size}:${item.modified}`;
 }
 function globMatches(path, pattern) {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, ".*");
-  return new RegExp(`^${escaped}$`).test(path);
+  let expression = "";
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index];
+    if (character === "*" && pattern[index + 1] === "*") {
+      expression += ".*";
+      index++;
+    } else if (character === "*") {
+      expression += "[^/]*";
+    } else if (character === "?") {
+      expression += "[^/]";
+    } else {
+      expression += character.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${expression}$`).test(path);
+}
+function basicAuth(username, password) {
+  const bytes = new TextEncoder().encode(`${username}:${password}`);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+async function withTimeout(promise, milliseconds) {
+  let timer = 0;
+  const timeout = new Promise((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error("\u8FDE\u63A5\u8D85\u65F6")), milliseconds);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 function sleep(milliseconds) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));

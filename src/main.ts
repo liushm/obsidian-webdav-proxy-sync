@@ -7,13 +7,10 @@ import {
   Setting,
   TFile,
   normalizePath,
+  Platform,
+  requestUrl,
+  type SettingDefinitionItem,
 } from "obsidian";
-import * as http from "http";
-import * as https from "https";
-import { URL } from "url";
-import { HttpProxyAgent } from "http-proxy-agent";
-import { HttpsProxyAgent } from "https-proxy-agent";
-import { SocksProxyAgent } from "socks-proxy-agent";
 
 interface SyncEntry {
   localSig: string;
@@ -46,8 +43,8 @@ interface DavItem {
 
 interface DavResponse {
   status: number;
-  headers: http.IncomingHttpHeaders;
-  body: Buffer;
+  headers: Record<string, string | string[] | undefined>;
+  body: ArrayBuffer;
 }
 
 const DEFAULT_DATA: PluginData = {
@@ -60,7 +57,7 @@ const DEFAULT_DATA: PluginData = {
   syncIntervalMinutes: 10,
   syncOnStartup: false,
   requestTimeoutSeconds: 60,
-  excludes: ".obsidian/**\n.trash/**\n**/.DS_Store\n**/Thumbs.db",
+  excludes: ".trash/**\n**/.DS_Store\n**/Thumbs.db",
   logs: [],
   syncStateVersion: 2,
   syncState: {},
@@ -89,13 +86,13 @@ class WebDavClient {
   async list(): Promise<Map<string, DavItem>> {
     await this.ensureRoot();
     const response = await this.propfind("", "infinity");
-    return this.parsePropfind(response.body.toString("utf8"));
+    return this.parsePropfind(new TextDecoder().decode(response.body));
   }
 
   async stat(path: string): Promise<DavItem | null> {
     try {
       const response = await this.propfind(path, "0");
-      return this.parsePropfind(response.body.toString("utf8")).get(cleanPath(path)) ?? null;
+      return this.parsePropfind(new TextDecoder().decode(response.body)).get(cleanPath(path)) ?? null;
     } catch (error) {
       if (error instanceof Error && error.message.includes("HTTP 404")) return null;
       throw error;
@@ -104,10 +101,7 @@ class WebDavClient {
 
   async download(path: string): Promise<{ data: ArrayBuffer; item: DavItem }> {
     const response = await this.request("GET", path);
-    const data = response.body.buffer.slice(
-      response.body.byteOffset,
-      response.body.byteOffset + response.body.byteLength,
-    ) as ArrayBuffer;
+    const data = response.body;
     // Some WebDAV backends refresh the file timestamp/ETag after a GET. Store the
     // post-download metadata, otherwise the next sync sees a false remote change.
     const item = await this.stat(path);
@@ -119,7 +113,7 @@ class WebDavClient {
     const normalized = cleanPath(path);
     const parent = normalized.split("/").slice(0, -1).join("/");
     if (parent) await this.ensureDirectory(parent);
-    await this.request("PUT", normalized, Buffer.from(data), {
+    await this.request("PUT", normalized, data, {
       "Content-Type": "application/octet-stream",
     });
     const item = await this.stat(normalized);
@@ -161,7 +155,7 @@ class WebDavClient {
       <d:propfind xmlns:d="DAV:">
         <d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getetag/></d:prop>
       </d:propfind>`;
-    return this.request("PROPFIND", path, Buffer.from(body), {
+    return this.request("PROPFIND", path, body, {
       Depth: depth,
       "Content-Type": "application/xml; charset=utf-8",
     });
@@ -216,74 +210,131 @@ class WebDavClient {
     return url;
   }
 
-  private makeAgent(target: URL): http.Agent | https.Agent | undefined {
-    const proxy = this.settings.proxyUrl.trim();
-    if (!proxy) {
-      if (target.protocol === "https:") {
-        return new https.Agent({ rejectUnauthorized: this.settings.rejectUnauthorized });
-      }
-      return undefined;
-    }
-    if (/^socks/i.test(proxy)) return new SocksProxyAgent(proxy);
-    if (target.protocol === "https:") {
-      return new HttpsProxyAgent(proxy, { rejectUnauthorized: this.settings.rejectUnauthorized });
-    }
-    return new HttpProxyAgent(proxy);
-  }
-
-  private request(
+  private async request(
     method: string,
     path: string,
-    body?: Buffer,
+    body?: string | ArrayBuffer,
     extraHeaders: Record<string, string> = {},
   ): Promise<DavResponse> {
     const target = this.urlFor(path);
-    const transport = target.protocol === "https:" ? https : http;
-    const authorization = Buffer.from(`${this.settings.username}:${this.settings.password}`).toString("base64");
-    const headers: Record<string, string | number> = {
-      Authorization: `Basic ${authorization}`,
-      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.2.2",
+    if (Platform.isMobileApp || (!this.settings.proxyUrl.trim() && this.settings.rejectUnauthorized)) {
+      return this.requestPortable(method, target, body, extraHeaders);
+    }
+    return this.requestDesktop(method, target, body, extraHeaders);
+  }
+
+  private async requestPortable(
+    method: string,
+    target: URL,
+    body?: string | ArrayBuffer,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<DavResponse> {
+    const headers: Record<string, string> = {
+      Authorization: `Basic ${basicAuth(this.settings.username, this.settings.password)}`,
       ...extraHeaders,
     };
-    if (body) headers["Content-Length"] = body.byteLength;
+    const timeoutMs = Math.max(5, this.settings.requestTimeoutSeconds) * 1000;
+    const response = await withTimeout(
+      requestUrl({
+        url: target.toString(),
+        method,
+        headers,
+        body,
+        throw: false,
+      }),
+      timeoutMs,
+    );
+    const result: DavResponse = {
+      status: response.status,
+      headers: response.headers,
+      body: response.arrayBuffer,
+    };
+    this.throwForStatus(result.status, method, target);
+    return result;
+  }
+
+  private async requestDesktop(
+    method: string,
+    target: URL,
+    body?: string | ArrayBuffer,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<DavResponse> {
+    const [{ default: http }, { default: https }] = await Promise.all([
+      import("node:http"),
+      import("node:https"),
+    ]);
+    const proxy = this.settings.proxyUrl.trim();
+    let agent: import("node:http").Agent | import("node:https").Agent | undefined;
+    if (!proxy) {
+      agent = target.protocol === "https:"
+        ? new https.Agent({ rejectUnauthorized: this.settings.rejectUnauthorized })
+        : undefined;
+    } else if (/^socks/i.test(proxy)) {
+      const { SocksProxyAgent } = await import("socks-proxy-agent");
+      agent = new SocksProxyAgent(proxy);
+    } else if (target.protocol === "https:") {
+      const { HttpsProxyAgent } = await import("https-proxy-agent");
+      agent = new HttpsProxyAgent(proxy, { rejectUnauthorized: this.settings.rejectUnauthorized });
+    } else {
+      const { HttpProxyAgent } = await import("http-proxy-agent");
+      agent = new HttpProxyAgent(proxy);
+    }
+
+    const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body ? new Uint8Array(body) : undefined;
+    const headers: Record<string, string | number> = {
+      Authorization: `Basic ${basicAuth(this.settings.username, this.settings.password)}`,
+      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.3.0",
+      ...extraHeaders,
+    };
+    if (bytes) headers["Content-Length"] = bytes.byteLength;
+    const transport = target.protocol === "https:" ? https : http;
 
     return new Promise((resolve, reject) => {
-      const request = transport.request(
-        target,
-        {
-          method,
-          headers,
-          agent: this.makeAgent(target),
-          timeout: Math.max(5, this.settings.requestTimeoutSeconds) * 1000,
-          rejectUnauthorized: this.settings.rejectUnauthorized,
-        },
-        (response) => {
-          const chunks: Buffer[] = [];
-          response.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-          response.on("end", () => {
-            const result: DavResponse = {
-              status: response.statusCode ?? 0,
-              headers: response.headers,
-              body: Buffer.concat(chunks),
-            };
-            if (result.status >= 200 && result.status < 300) {
-              resolve(result);
-              return;
-            }
-            const hint = result.status === 401
-              ? "（请检查用户名和密码）"
-              : result.status === 405
-                ? "（请检查 WebDAV 地址；OpenList 通常以 /dav 结尾）"
-                : "";
-            reject(new Error(`HTTP ${result.status} ${method} ${target.pathname} ${hint}`));
-          });
-        },
-      );
-      request.on("timeout", () => request.destroy(new Error("连接超时")));
-      request.on("error", reject);
-      if (body) request.write(body);
-      request.end();
+      const req = transport.request(target, {
+        method,
+        headers,
+        agent,
+        timeout: Math.max(5, this.settings.requestTimeoutSeconds) * 1000,
+        rejectUnauthorized: this.settings.rejectUnauthorized,
+      }, (response) => {
+        const chunks: Uint8Array[] = [];
+        response.on("data", (chunk: Uint8Array) => chunks.push(new Uint8Array(chunk)));
+        response.on("end", () => {
+          const length = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+          const combined = new Uint8Array(length);
+          let offset = 0;
+          for (const chunk of chunks) {
+            combined.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          const result: DavResponse = {
+            status: response.statusCode ?? 0,
+            headers: response.headers,
+            body: combined.buffer,
+          };
+          try {
+            this.throwForStatus(result.status, method, target);
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+      req.on("timeout", () => req.destroy(new Error("连接超时")));
+      req.on("error", reject);
+      if (bytes) req.write(bytes);
+      req.end();
     });
+  }
+
+  private throwForStatus(status: number, method: string, target: URL): void {
+    if (status >= 200 && status < 300) return;
+    const hint = status === 401
+      ? "（请检查用户名和密码）"
+      : status === 405
+        ? "（服务器拒绝了该 WebDAV 操作，请检查路径、权限或同名冲突）"
+        : "";
+    throw new Error(`HTTP ${status} ${method} ${target.pathname} ${hint}`);
   }
 }
 
@@ -356,7 +407,6 @@ export default class WebDavProxySyncPlugin extends Plugin {
       await this.saveData(this.data);
       new Notice(`WebDAV 连接失败：${message}。可在命令面板中打开“查看同步日志”。`, 10_000);
       this.setStatus(`WebDAV：连接失败 · ${message}`);
-      console.error("WebDAV connection test failed", error);
     }
   }
 
@@ -498,7 +548,6 @@ export default class WebDavProxySyncPlugin extends Plugin {
       await this.saveData(this.data);
       this.setStatus(`WebDAV：同步失败 · ${message}`);
       new Notice(`WebDAV 同步失败：${message}${location}。可打开“查看同步日志”查看详情。`, 12_000);
-      console.error("WebDAV sync failed", error);
     } finally {
       this.syncing = false;
     }
@@ -550,6 +599,8 @@ export default class WebDavProxySyncPlugin extends Plugin {
   }
 
   private isExcluded(path: string): boolean {
+    const configDir = cleanPath(this.app.vault.configDir);
+    if (path === configDir || path.startsWith(`${configDir}/`)) return true;
     const patterns = this.data.excludes.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
     return patterns.some((pattern) => globMatches(path, pattern));
   }
@@ -578,9 +629,7 @@ export default class WebDavProxySyncPlugin extends Plugin {
     const line = `${new Date().toLocaleString()} [${level}] ${message}`;
     this.data.logs.push(line);
     if (this.data.logs.length > 300) this.data.logs.splice(0, this.data.logs.length - 300);
-    if (level === "ERROR") console.error(line);
-    else if (level === "WARN") console.warn(line);
-    else console.info(line);
+
   }
 
   private setStatus(text: string): void {
@@ -626,10 +675,14 @@ class WebDavProxySyncSettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [];
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "WebDAV 代理同步" });
+    new Setting(containerEl).setName("WebDAV 代理同步").setHeading();
     containerEl.createEl("p", {
       text: "仅支持桌面版。密码保存在本地插件配置中，请确保设备可信。首次正式同步前建议备份仓库。",
       cls: "webdav-proxy-sync-status",
@@ -668,8 +721,11 @@ class WebDavProxySyncSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("代理地址")
-      .setDesc("支持 http://、https://、socks5:// 和 socks5h://；留空表示直连")
+      .setDesc(Platform.isMobileApp
+        ? "移动端使用系统网络，插件内代理设置仅在桌面端生效"
+        : "支持 http://、https://、socks5:// 和 socks5h://；留空表示直连")
       .addText((text) => text
+        .setDisabled(Platform.isMobileApp)
         .setPlaceholder("socks5h://127.0.0.1:7890")
         .setValue(this.plugin.data.proxyUrl)
         .onChange(async (value) => { this.plugin.data.proxyUrl = value.trim(); await this.plugin.saveSettings(); }));
@@ -678,6 +734,7 @@ class WebDavProxySyncSettingTab extends PluginSettingTab {
       .setName("验证 HTTPS 证书")
       .setDesc("建议保持开启；仅在使用可信的自签名证书时关闭")
       .addToggle((toggle) => toggle
+        .setDisabled(Platform.isMobileApp)
         .setValue(this.plugin.data.rejectUnauthorized)
         .onChange(async (value) => { this.plugin.data.rejectUnauthorized = value; await this.plugin.saveSettings(); }));
 
@@ -711,7 +768,7 @@ class WebDavProxySyncSettingTab extends PluginSettingTab {
 
     const excludes = new Setting(containerEl)
       .setName("排除规则")
-      .setDesc("每行一条简单 glob 规则；默认不同步 .obsidian 和回收站")
+      .setDesc("每行一条简单 glob 规则；默认不同步当前仓库配置目录和回收站")
       .setClass("webdav-proxy-sync-setting");
     excludes.addTextArea((text) => text
       .setValue(this.plugin.data.excludes)
@@ -758,13 +815,40 @@ function signatureRemote(item: DavItem): string {
 }
 
 function globMatches(path: string, pattern: string): boolean {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, "\u0000")
-    .replace(/\*/g, "[^/]*")
-    .replace(/\?/g, "[^/]")
-    .replace(/\u0000/g, ".*");
-  return new RegExp(`^${escaped}$`).test(path);
+  let expression = "";
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index];
+    if (character === "*" && pattern[index + 1] === "*") {
+      expression += ".*";
+      index++;
+    } else if (character === "*") {
+      expression += "[^/]*";
+    } else if (character === "?") {
+      expression += "[^/]";
+    } else {
+      expression += character.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${expression}$`).test(path);
+}
+
+function basicAuth(username: string, password: string): string {
+  const bytes = new TextEncoder().encode(`${username}:${password}`);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
+  let timer = 0;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error("连接超时")), milliseconds);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 function sleep(milliseconds: number): Promise<void> {
