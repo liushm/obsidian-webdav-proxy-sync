@@ -242,7 +242,7 @@ class WebDavClient {
     const authorization = Buffer.from(`${this.settings.username}:${this.settings.password}`).toString("base64");
     const headers: Record<string, string | number> = {
       Authorization: `Basic ${authorization}`,
-      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.2.1",
+      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.2.2",
       ...extraHeaders,
     };
     if (body) headers["Content-Length"] = body.byteLength;
