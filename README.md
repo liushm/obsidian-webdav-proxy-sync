@@ -1,67 +1,98 @@
 # WebDAV Proxy Sync
 
-一个支持代理的 Obsidian 桌面端 WebDAV 双向同步插件。
+A desktop-only Obsidian plugin that synchronizes notes and attachments with a WebDAV server through HTTP, HTTPS, SOCKS5, or SOCKS5H proxies.
 
-## 功能
+一个支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H 代理的 Obsidian 桌面端 WebDAV 同步插件。
 
-- WebDAV 双向同步笔记和附件
-- 支持 HTTP、HTTPS、SOCKS5、SOCKS5H 代理
-- 手动同步、启动同步和定时同步
-- 同步状态栏与连接测试
-- 实时进度：当前文件、已检查数量和总数量
-- 持久化同步日志：错误详情、失败文件和简化堆栈
-- 可配置网络超时
-- 修复 OpenList 在下载后刷新 ETag 导致的重复下载
-- 首次遇到同名同大小文件时建立同步基线，不重复传输
-- 双端同时修改时保留本地冲突副本
-- 安全默认值：不传播删除、默认排除 `.obsidian` 与 `.trash`
+> **Beta / 测试版：** Back up your vault before the first sync. 首次同步前请备份仓库。
 
-## 安装
+## Features / 功能
 
-### 直接安装构建产物
+- Bidirectional synchronization of notes and attachments / 双向同步笔记与附件
+- HTTP, HTTPS, SOCKS5 and SOCKS5H proxy support / 支持多种代理协议
+- Manual, startup and scheduled sync / 手动、启动和定时同步
+- Progress indicator and persistent diagnostic log / 实时进度和持久化诊断日志
+- Conflict copies when both sides change / 双端修改时保留冲突副本
+- Configurable timeouts and exclusion patterns / 可配置超时与排除规则
+- Safe default: deletions are not propagated / 默认不传播删除，降低误删风险
 
-1. 在仓库中创建目录：`.obsidian/plugins/webdav-proxy-sync/`
-2. 将以下文件复制进去：
-   - `main.js`
-   - `manifest.json`
-   - `styles.css`
-3. 重启 Obsidian。
-4. 打开“设置 → 第三方插件”，启用 **WebDAV Proxy Sync**。
+## Installation / 安装
 
-### 从源码构建
+### Community plugins
+
+After the plugin is accepted into the Obsidian community directory, install it from **Settings → Community plugins → Browse**.
+
+插件进入社区目录后，可通过 **设置 → 第三方插件 → 浏览** 安装。
+
+### Manual installation / 手动安装
+
+Create `.obsidian/plugins/webdav-proxy-sync/` in your vault and copy:
+
+- `main.js`
+- `manifest.json`
+- `styles.css`
+
+Restart Obsidian and enable **WebDAV Proxy Sync**.
+
+### Build from source / 从源码构建
 
 ```bash
 npm install
 npm run build
 ```
 
-## OpenList 配置示例
+## Configuration / 配置
 
-- WebDAV 地址：`https://example.com/dav`
-- 远程目录：`obsidian`
-- SOCKS 代理：`socks5h://127.0.0.1:7890`
-- HTTP 代理：`http://127.0.0.1:7890`
+Open **Settings → WebDAV Proxy Sync** and configure:
 
-WebDAV 地址必须是 DAV 入口，而不是 OpenList 网页首页。
+- WebDAV URL, for example `https://example.com/dav`
+- Username and password
+- Remote folder, for example `obsidian`
+- Optional proxy, for example `socks5h://127.0.0.1:7890`
+- Sync interval and exclusion patterns
 
-## 同步规则
+For OpenList, use the actual WebDAV endpoint, which commonly ends in `/dav`, rather than the web interface URL.
 
-- 仅本地存在：上传。
-- 仅远程存在：下载。
-- 只有本地变化：上传。
-- 只有远程变化：下载。
-- 本地和远程同时变化：把本地版本保存为 `*.conflict-local-时间戳.*`，然后下载远程版本。
-- 当前版本不传播删除，避免首次使用或配置错误造成文件丢失。
+## Synchronization behavior / 同步规则
 
-首次同步通过修改时间判断方向，之后使用本地签名和远程 ETag 判断变化。正式使用前建议备份仓库。
+- Local only → upload / 仅本地存在则上传
+- Remote only → download / 仅远端存在则下载
+- Local changed → upload / 仅本地变化则上传
+- Remote changed → download / 仅远端变化则下载
+- Both changed → preserve a local `*.conflict-local-*` copy, then download the remote version
+- Deletions are not propagated in the current version. A file deleted on only one side is restored from the other side.
 
-## 注意事项
+The plugin scans metadata on both sides during each run but transfers file content only when required.
 
-- 插件依赖 Node.js 网络能力，因此仅支持 Obsidian 桌面版。
-- 密码存放在插件目录的 `data.json` 中，没有经过系统钥匙串加密。
-- 部分 WebDAV 服务不支持 `Depth: infinity`。这种服务需要改成递归的 `Depth: 1` 列目录实现。
-- 如果使用 HTTPS WebDAV 和 HTTP 代理，代理会通过 CONNECT 隧道连接服务器。
+## Privacy and security / 隐私与安全
 
-## 开发状态
+- No telemetry or analytics / 不包含遥测或统计
+- No developer-operated service is contacted / 不连接开发者运营的服务器
+- Network requests are sent only to the user-configured WebDAV server and optional proxy
+- Credentials are stored locally in the plugin's `data.json` file and are not encrypted by the operating-system keychain
+- Diagnostic logs contain file paths and errors, but never intentionally include the configured password
+- Disabling HTTPS certificate verification reduces connection security and should only be used with a trusted self-signed server
 
-当前版本为可测试的 MVP。同步时会扫描并比较本地和远程文件元数据，但只上传或下载发生变化的文件内容。建议先用一个测试仓库和独立远程目录验证，再用于正式笔记库。
+## Limitations / 当前限制
+
+- Desktop only; proxy support relies on Node.js networking APIs
+- Deletions are not synchronized
+- Some WebDAV implementations do not support `Depth: infinity`
+- Some OpenList storage drivers may delay or reject `MKCOL` directory creation
+- First sync should be tested with a backup and a dedicated remote directory
+
+## Reporting issues / 反馈问题
+
+When reporting an issue, include:
+
+- Obsidian version
+- Plugin version
+- WebDAV server type
+- Proxy type, without credentials
+- Relevant entries copied from the plugin sync log
+
+Do not publish usernames, passwords, proxy credentials, tokens, or private note contents.
+
+## License
+
+MIT

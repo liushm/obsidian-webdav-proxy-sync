@@ -7,7 +7,13 @@
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
   },
-  "keywords": ["obsidian", "webdav", "sync", "proxy", "socks5"],
+  "keywords": [
+    "obsidian",
+    "webdav",
+    "sync",
+    "proxy",
+    "socks5"
+  ],
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^22.10.0",
@@ -20,5 +26,14 @@
     "http-proxy-agent": "^7.0.2",
     "https-proxy-agent": "^7.0.6",
     "socks-proxy-agent": "^8.0.5"
-  }
+  },
+  "author": "liushm",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liushm/obsidian-webdav-proxy-sync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/liushm/obsidian-webdav-proxy-sync/issues"
+  },
+  "homepage": "https://github.com/liushm/obsidian-webdav-proxy-sync#readme"
 }
