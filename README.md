@@ -15,6 +15,7 @@ A cross-platform Obsidian plugin that synchronizes notes and attachments with a 
 - Concurrent downloads with configurable retry and exponential backoff / 并发下载、可配置重试与指数退避
 - Stops only after three consecutive files exhaust all download retries / 连续三个文件重试后仍失败才中断同步
 - Handles zero-byte files from OpenList storage drivers that otherwise return HTTP 416
+- Keeps desktop proxy networking compatible with Obsidian's CommonJS plugin loader
 - Progress indicator and persistent diagnostic log / 实时进度和持久化诊断日志
 - Conflict copies when both sides change / 双端修改时保留冲突副本
 - Configurable timeouts and exclusion patterns / 可配置超时与排除规则

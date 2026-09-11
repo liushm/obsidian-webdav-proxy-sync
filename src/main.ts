@@ -332,10 +332,12 @@ class WebDavClient {
     body?: string | ArrayBuffer,
     extraHeaders: Record<string, string> = {},
   ): Promise<DavResponse> {
-    const [{ default: http }, { default: https }] = await Promise.all([
-      import("node:http"),
-      import("node:https"),
-    ]);
+    // Obsidian desktop exposes Node.js through CommonJS. Keep these requires
+    // inside the desktop-only branch so mobile never evaluates Node APIs.
+    // Native dynamic import (import("node:http")) is not supported by Obsidian's
+    // plugin loader and is treated like a browser module fetch.
+    const http = require("http") as typeof import("http");
+    const https = require("https") as typeof import("https");
     const proxy = this.settings.proxyUrl.trim();
     let agent: import("node:http").Agent | import("node:https").Agent | undefined;
     if (!proxy) {
@@ -356,7 +358,7 @@ class WebDavClient {
     const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body ? new Uint8Array(body) : undefined;
     const headers: Record<string, string | number> = {
       Authorization: `Basic ${basicAuth(this.settings.username, this.settings.password)}`,
-      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.3.1",
+      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.3.2",
       ...extraHeaders,
     };
     if (bytes) headers["Content-Length"] = bytes.byteLength;

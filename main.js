@@ -6050,10 +6050,8 @@ var WebDavClient = class {
     return result;
   }
   async requestDesktop(method, target, body, extraHeaders = {}) {
-    const [{ default: http }, { default: https }] = await Promise.all([
-      import("node:http"),
-      import("node:https")
-    ]);
+    const http = require("http");
+    const https = require("https");
     const proxy = this.settings.proxyUrl.trim();
     let agent;
     if (!proxy) {
@@ -6071,7 +6069,7 @@ var WebDavClient = class {
     const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body ? new Uint8Array(body) : void 0;
     const headers = {
       Authorization: `Basic ${basicAuth(this.settings.username, this.settings.password)}`,
-      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.3.1",
+      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.3.2",
       ...extraHeaders
     };
     if (bytes) headers["Content-Length"] = bytes.byteLength;
