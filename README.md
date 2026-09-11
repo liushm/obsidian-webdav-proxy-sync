@@ -12,6 +12,9 @@ A cross-platform Obsidian plugin that synchronizes notes and attachments with a 
 - Android and iOS support without plugin-level proxy / 支持 Android 和 iOS（使用系统网络）
 - HTTP, HTTPS, SOCKS5 and SOCKS5H proxy support on desktop / 桌面端支持多种代理协议
 - Manual, startup and scheduled sync / 手动、启动和定时同步
+- Concurrent downloads with configurable retry and exponential backoff / 并发下载、可配置重试与指数退避
+- Stops only after three consecutive files exhaust all download retries / 连续三个文件重试后仍失败才中断同步
+- Handles zero-byte files from OpenList storage drivers that otherwise return HTTP 416
 - Progress indicator and persistent diagnostic log / 实时进度和持久化诊断日志
 - Conflict copies when both sides change / 双端修改时保留冲突副本
 - Configurable timeouts and exclusion patterns / 可配置超时与排除规则

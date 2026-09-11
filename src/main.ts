@@ -27,6 +27,9 @@ interface PluginData {
   syncIntervalMinutes: number;
   syncOnStartup: boolean;
   requestTimeoutSeconds: number;
+  downloadConcurrency: number;
+  downloadRetryCount: number;
+  downloadRetryDelaySeconds: number;
   excludes: string;
   logs: string[];
   syncStateVersion: number;
@@ -47,6 +50,22 @@ interface DavResponse {
   body: ArrayBuffer;
 }
 
+interface DownloadJob {
+  path: string;
+  remoteItem: DavItem;
+  localFile?: TFile;
+  conflict: boolean;
+  position: number;
+  total: number;
+}
+
+interface DownloadJobResult {
+  job: DownloadJob;
+  success: boolean;
+  conflict: boolean;
+  error?: unknown;
+}
+
 const DEFAULT_DATA: PluginData = {
   serverUrl: "",
   username: "",
@@ -57,6 +76,9 @@ const DEFAULT_DATA: PluginData = {
   syncIntervalMinutes: 10,
   syncOnStartup: false,
   requestTimeoutSeconds: 60,
+  downloadConcurrency: 4,
+  downloadRetryCount: 3,
+  downloadRetryDelaySeconds: 2,
   excludes: ".trash/**\n**/.DS_Store\n**/Thumbs.db",
   logs: [],
   syncStateVersion: 2,
@@ -99,14 +121,65 @@ class WebDavClient {
     }
   }
 
-  async download(path: string): Promise<{ data: ArrayBuffer; item: DavItem }> {
-    const response = await this.request("GET", path);
-    const data = response.body;
-    // Some WebDAV backends refresh the file timestamp/ETag after a GET. Store the
-    // post-download metadata, otherwise the next sync sees a false remote change.
-    const item = await this.stat(path);
-    if (!item) throw new Error(`下载后无法读取远程文件信息：${path}`);
+  async download(
+    path: string,
+    expectedItem: DavItem,
+    onRetry?: (retryNumber: number, maxRetries: number, error: unknown) => void,
+  ): Promise<{ data: ArrayBuffer; item: DavItem }> {
+    const maxRetries = clampInteger(this.settings.downloadRetryCount, 0, 10);
+    // Some storage drivers (notably OpenList backed by Quark) respond with HTTP
+    // 416 when asked to GET a valid zero-byte file. WebDAV metadata is enough to
+    // materialize such a file locally without issuing the broken GET request.
+    if (expectedItem.size === 0) {
+      return { data: new ArrayBuffer(0), item: expectedItem };
+    }
+    let data: ArrayBuffer | null = null;
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await this.request("GET", path, undefined, {
+          "Accept-Encoding": "identity",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        });
+        data = response.body;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxRetries || !isRetriableDownloadError(error)) throw error;
+        const retryNumber = attempt + 1;
+        onRetry?.(retryNumber, maxRetries, error);
+        await sleep(this.retryDelay(retryNumber));
+      }
+    }
+
+    if (!data) throw lastError ?? new Error(`下载失败：${path}`);
+
+    // Some WebDAV backends refresh the file timestamp/ETag after a GET. Query
+    // metadata separately with retries so a transient PROPFIND failure does not
+    // force another transfer of a potentially large file.
+    let item: DavItem | null = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        item = await this.stat(path);
+        if (item) break;
+        throw new Error(`下载后无法读取远程文件信息：${path}`);
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxRetries || !isRetriableDownloadError(error)) throw error;
+        const retryNumber = attempt + 1;
+        onRetry?.(retryNumber, maxRetries, error);
+        await sleep(this.retryDelay(retryNumber));
+      }
+    }
+    if (!item) throw lastError ?? new Error(`下载后无法读取远程文件信息：${path}`);
     return { data, item };
+  }
+
+  private retryDelay(retryNumber: number): number {
+    const base = clampInteger(this.settings.downloadRetryDelaySeconds, 0, 60) * 1000;
+    return Math.min(30_000, base * Math.pow(2, Math.max(0, retryNumber - 1)));
   }
 
   async upload(path: string, data: ArrayBuffer): Promise<DavItem> {
@@ -283,7 +356,7 @@ class WebDavClient {
     const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body ? new Uint8Array(body) : undefined;
     const headers: Record<string, string | number> = {
       Authorization: `Basic ${basicAuth(this.settings.username, this.settings.password)}`,
-      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.3.0",
+      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.3.1",
       ...extraHeaders,
     };
     if (bytes) headers["Content-Length"] = bytes.byteLength;
@@ -426,6 +499,7 @@ export default class WebDavProxySyncPlugin extends Plugin {
     let uploaded = 0;
     let downloaded = 0;
     let conflicts = 0;
+    let failedDownloads = 0;
     let currentPath = "";
 
     try {
@@ -441,8 +515,14 @@ export default class WebDavProxySyncPlugin extends Plugin {
 
       const paths = new Set([...local.keys(), ...remote.keys()]);
       const sortedPaths = Array.from(paths).sort();
+      const downloadJobs: DownloadJob[] = [];
       this.addLog("INFO", `扫描完成：本地 ${local.size} 个文件，远程 ${remote.size} 个文件，共需比较 ${sortedPaths.length} 个路径`);
       let processed = 0;
+
+      const queueDownload = (path: string, remoteItem: DavItem, localFile?: TFile, conflict = false): void => {
+        downloadJobs.push({ path, remoteItem, localFile, conflict, position: processed, total: sortedPaths.length });
+      };
+
       for (const path of sortedPaths) {
         currentPath = path;
         processed++;
@@ -462,12 +542,7 @@ export default class WebDavProxySyncPlugin extends Plugin {
         }
 
         if (!localFile && remoteItem) {
-          this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 下载 ${shortPath(path)}`);
-          const downloadedFile = await client.download(path);
-          const created = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
-          await this.setState(path, created, downloadedFile.item);
-          downloaded++;
-          this.addLog("INFO", `下载：${path}`);
+          queueDownload(path, remoteItem);
           continue;
         }
 
@@ -487,19 +562,11 @@ export default class WebDavProxySyncPlugin extends Plugin {
             uploaded++;
             this.addLog("INFO", `上传：${path}`);
           } else {
-            this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 下载 ${shortPath(path)}`);
-            const downloadedFile = await client.download(path);
-            const updated = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
-            await this.setState(path, updated, downloadedFile.item);
-            downloaded++;
-            this.addLog("INFO", `下载：${path}`);
+            queueDownload(path, remoteItem, localFile);
           }
           continue;
         }
 
-        // Version 0.1/0.2 stored pre-GET ETags. OpenList may update the ETag
-        // after a download, causing unchanged files to be downloaded again.
-        // Re-baseline existing same-size pairs once when upgrading to state v2.
         if (this.needsStateMigration && localFile.stat.size === remoteItem.size) {
           await this.setState(path, localFile, remoteItem);
           continue;
@@ -510,13 +577,7 @@ export default class WebDavProxySyncPlugin extends Plugin {
         if (!localChanged && !remoteChanged) continue;
 
         if (localChanged && remoteChanged) {
-          this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 处理冲突 ${shortPath(path)}`);
-          await this.createConflictCopy(localFile);
-          const downloadedFile = await client.download(path);
-          const updated = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
-          await this.setState(path, updated, downloadedFile.item);
-          conflicts++;
-          this.addLog("WARN", `双向冲突，已保留本地副本：${path}`);
+          queueDownload(path, remoteItem, localFile, true);
         } else if (localChanged) {
           this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 上传 ${shortPath(path)}`);
           const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
@@ -525,31 +586,98 @@ export default class WebDavProxySyncPlugin extends Plugin {
           uploaded++;
           this.addLog("INFO", `上传：${path}`);
         } else {
-          this.setStatus(`WebDAV：${processed}/${sortedPaths.length} · 下载 ${shortPath(path)}`);
-          const downloadedFile = await client.download(path);
-          const updated = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
-          await this.setState(path, updated, downloadedFile.item);
-          downloaded++;
-          this.addLog("INFO", `下载：${path}`);
+          queueDownload(path, remoteItem, localFile);
         }
       }
 
-      const summary = `上传 ${uploaded}，下载 ${downloaded}，冲突 ${conflicts}`;
+      if (downloadJobs.length > 0) {
+        const concurrency = clampInteger(this.data.downloadConcurrency, 1, 8);
+        this.addLog("INFO", `待下载 ${downloadJobs.length} 个文件，并发数 ${concurrency}，单文件最多重试 ${this.data.downloadRetryCount} 次`);
+        currentPath = "";
+        const result = await this.executeDownloadJobs(client, downloadJobs, concurrency);
+        downloaded += result.downloaded;
+        conflicts += result.conflicts;
+        failedDownloads += result.failed;
+      }
+
+      const summary = `上传 ${uploaded}，下载 ${downloaded}，冲突 ${conflicts}，下载失败 ${failedDownloads}`;
       this.addLog("INFO", `同步完成：${summary}`);
       this.data.syncStateVersion = 2;
       this.needsStateMigration = false;
       await this.saveData(this.data);
       this.setStatus(`WebDAV：${summary}`);
-      if (showNotice || uploaded + downloaded + conflicts > 0) new Notice(`WebDAV 同步完成：${summary}`);
+      if (showNotice || uploaded + downloaded + conflicts + failedDownloads > 0) new Notice(`WebDAV 同步完成：${summary}`);
     } catch (error) {
       const message = errorMessage(error);
-      const location = currentPath ? `，处理文件：${currentPath}` : "";
+      const location = currentPath ? `，最近处理：${currentPath}` : "";
       this.addLog("ERROR", `同步失败${location}：${message}${errorStack(error)}`);
       await this.saveData(this.data);
       this.setStatus(`WebDAV：同步失败 · ${message}`);
       new Notice(`WebDAV 同步失败：${message}${location}。可打开“查看同步日志”查看详情。`, 12_000);
     } finally {
       this.syncing = false;
+    }
+  }
+
+  private async executeDownloadJobs(
+    client: WebDavClient,
+    jobs: DownloadJob[],
+    concurrency: number,
+  ): Promise<{ downloaded: number; conflicts: number; failed: number }> {
+    let downloaded = 0;
+    let conflicts = 0;
+    let failed = 0;
+    let consecutiveFailures = 0;
+    let consecutiveFailedPaths: string[] = [];
+
+    // Create parent directories before starting concurrent writes to avoid races
+    // where two downloads try to create the same local folder simultaneously.
+    for (const job of jobs) await this.ensureLocalParent(job.path);
+
+    for (let offset = 0; offset < jobs.length; offset += concurrency) {
+      const batch = jobs.slice(offset, offset + concurrency);
+      const results = await Promise.all(batch.map((job) => this.executeDownloadJob(client, job)));
+      let shouldAbort = false;
+
+      for (const result of results) {
+        if (result.success) {
+          downloaded++;
+          if (result.conflict) conflicts++;
+          consecutiveFailures = 0;
+          consecutiveFailedPaths = [];
+        } else {
+          failed++;
+          consecutiveFailures++;
+          consecutiveFailedPaths.push(result.job.path);
+          const message = errorMessage(result.error);
+          this.addLog("ERROR", `下载最终失败（已重试）：${result.job.path}：${message}${errorStack(result.error)}`);
+          if (consecutiveFailures >= 3) shouldAbort = true;
+        }
+      }
+
+      await this.saveData(this.data);
+      if (shouldAbort) {
+        throw new Error(`连续 ${consecutiveFailures} 个文件下载失败，已中断本次同步：${consecutiveFailedPaths.join("、")}；本轮共成功 ${downloaded} 个、失败 ${failed} 个`);
+      }
+    }
+    return { downloaded, conflicts, failed };
+  }
+
+  private async executeDownloadJob(client: WebDavClient, job: DownloadJob): Promise<DownloadJobResult> {
+    try {
+      this.setStatus(`WebDAV：下载 ${job.position}/${job.total} · ${shortPath(job.path)}`);
+      const downloadedFile = await client.download(job.path, job.remoteItem, (retryNumber, maxRetries, error) => {
+        this.addLog("WARN", `下载重试 ${retryNumber}/${maxRetries}：${job.path}：${errorMessage(error)}`);
+        this.setStatus(`WebDAV：重试 ${retryNumber}/${maxRetries} · ${shortPath(job.path)}`);
+      });
+      if (job.conflict && job.localFile) await this.createConflictCopy(job.localFile);
+      const updated = await this.writeRemoteFile(job.path, downloadedFile.data, downloadedFile.item.modified);
+      await this.setState(job.path, updated, downloadedFile.item);
+      if (job.conflict) this.addLog("WARN", `双向冲突，已保留本地副本：${job.path}`);
+      else this.addLog("INFO", `下载：${job.path}`);
+      return { job, success: true, conflict: job.conflict };
+    } catch (error) {
+      return { job, success: false, conflict: false, error };
     }
   }
 
@@ -648,7 +776,7 @@ class SyncLogModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "WebDAV 同步日志" });
+    new Setting(contentEl).setName("WebDAV 同步日志").setHeading();
     const toolbar = contentEl.createDiv({ cls: "webdav-proxy-sync-log-toolbar" });
     const copyButton = toolbar.createEl("button", { text: "复制日志" });
     copyButton.onclick = () => {
@@ -750,6 +878,36 @@ class WebDavProxySyncSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
+      .setName("并发下载数")
+      .setDesc("同时下载的文件数，建议 3–6；过高可能触发 WebDAV 服务限流")
+      .addText((text) => text
+        .setValue(String(this.plugin.data.downloadConcurrency))
+        .onChange(async (value) => {
+          this.plugin.data.downloadConcurrency = clampInteger(Number.parseInt(value, 10), 1, 8);
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName("下载重试次数")
+      .setDesc("单个文件下载失败后的重试次数；HTTP 416、超时和服务器临时错误会自动重试")
+      .addText((text) => text
+        .setValue(String(this.plugin.data.downloadRetryCount))
+        .onChange(async (value) => {
+          this.plugin.data.downloadRetryCount = clampInteger(Number.parseInt(value, 10), 0, 10);
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName("重试基础间隔（秒）")
+      .setDesc("按指数退避等待，例如设置 2 秒时依次等待 2、4、8 秒")
+      .addText((text) => text
+        .setValue(String(this.plugin.data.downloadRetryDelaySeconds))
+        .onChange(async (value) => {
+          this.plugin.data.downloadRetryDelaySeconds = clampInteger(Number.parseInt(value, 10), 0, 60);
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
       .setName("自动同步间隔（分钟）")
       .setDesc("设为 0 可关闭定时同步")
       .addText((text) => text
@@ -830,6 +988,28 @@ function globMatches(path: string, pattern: string): boolean {
     }
   }
   return new RegExp(`^${expression}$`).test(path);
+}
+
+function clampInteger(value: number, minimum: number, maximum: number): number {
+  if (!Number.isFinite(value)) return minimum;
+  return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
+}
+
+function httpStatusFromError(error: unknown): number | null {
+  const match = errorMessage(error).match(/HTTP\s+(\d{3})/i);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+function isRetriableDownloadError(error: unknown): boolean {
+  const status = httpStatusFromError(error);
+  if (status === null) return true;
+  return status === 408
+    || status === 409
+    || status === 416
+    || status === 423
+    || status === 425
+    || status === 429
+    || status >= 500;
 }
 
 function basicAuth(username: string, password: string): string {

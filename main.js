@@ -5845,6 +5845,9 @@ var DEFAULT_DATA = {
   syncIntervalMinutes: 10,
   syncOnStartup: false,
   requestTimeoutSeconds: 60,
+  downloadConcurrency: 4,
+  downloadRetryCount: 3,
+  downloadRetryDelaySeconds: 2,
   excludes: ".trash/**\n**/.DS_Store\n**/Thumbs.db",
   logs: [],
   syncStateVersion: 2,
@@ -5879,12 +5882,51 @@ var WebDavClient = class {
       throw error;
     }
   }
-  async download(path) {
-    const response = await this.request("GET", path);
-    const data = response.body;
-    const item = await this.stat(path);
-    if (!item) throw new Error(`\u4E0B\u8F7D\u540E\u65E0\u6CD5\u8BFB\u53D6\u8FDC\u7A0B\u6587\u4EF6\u4FE1\u606F\uFF1A${path}`);
+  async download(path, expectedItem, onRetry) {
+    const maxRetries = clampInteger(this.settings.downloadRetryCount, 0, 10);
+    if (expectedItem.size === 0) {
+      return { data: new ArrayBuffer(0), item: expectedItem };
+    }
+    let data = null;
+    let lastError;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await this.request("GET", path, void 0, {
+          "Accept-Encoding": "identity",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache"
+        });
+        data = response.body;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxRetries || !isRetriableDownloadError(error)) throw error;
+        const retryNumber = attempt + 1;
+        onRetry?.(retryNumber, maxRetries, error);
+        await sleep(this.retryDelay(retryNumber));
+      }
+    }
+    if (!data) throw lastError ?? new Error(`\u4E0B\u8F7D\u5931\u8D25\uFF1A${path}`);
+    let item = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        item = await this.stat(path);
+        if (item) break;
+        throw new Error(`\u4E0B\u8F7D\u540E\u65E0\u6CD5\u8BFB\u53D6\u8FDC\u7A0B\u6587\u4EF6\u4FE1\u606F\uFF1A${path}`);
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxRetries || !isRetriableDownloadError(error)) throw error;
+        const retryNumber = attempt + 1;
+        onRetry?.(retryNumber, maxRetries, error);
+        await sleep(this.retryDelay(retryNumber));
+      }
+    }
+    if (!item) throw lastError ?? new Error(`\u4E0B\u8F7D\u540E\u65E0\u6CD5\u8BFB\u53D6\u8FDC\u7A0B\u6587\u4EF6\u4FE1\u606F\uFF1A${path}`);
     return { data, item };
+  }
+  retryDelay(retryNumber) {
+    const base = clampInteger(this.settings.downloadRetryDelaySeconds, 0, 60) * 1e3;
+    return Math.min(3e4, base * Math.pow(2, Math.max(0, retryNumber - 1)));
   }
   async upload(path, data) {
     const normalized = cleanPath(path);
@@ -6029,7 +6071,7 @@ var WebDavClient = class {
     const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body ? new Uint8Array(body) : void 0;
     const headers = {
       Authorization: `Basic ${basicAuth(this.settings.username, this.settings.password)}`,
-      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.3.0",
+      "User-Agent": "Obsidian-WebDAV-Proxy-Sync/0.3.1",
       ...extraHeaders
     };
     if (bytes) headers["Content-Length"] = bytes.byteLength;
@@ -6160,6 +6202,7 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
     let uploaded = 0;
     let downloaded = 0;
     let conflicts = 0;
+    let failedDownloads = 0;
     let currentPath = "";
     try {
       const client = new WebDavClient(this.data);
@@ -6173,8 +6216,12 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
       }
       const paths = /* @__PURE__ */ new Set([...local.keys(), ...remote.keys()]);
       const sortedPaths = Array.from(paths).sort();
+      const downloadJobs = [];
       this.addLog("INFO", `\u626B\u63CF\u5B8C\u6210\uFF1A\u672C\u5730 ${local.size} \u4E2A\u6587\u4EF6\uFF0C\u8FDC\u7A0B ${remote.size} \u4E2A\u6587\u4EF6\uFF0C\u5171\u9700\u6BD4\u8F83 ${sortedPaths.length} \u4E2A\u8DEF\u5F84`);
       let processed = 0;
+      const queueDownload = (path, remoteItem, localFile, conflict = false) => {
+        downloadJobs.push({ path, remoteItem, localFile, conflict, position: processed, total: sortedPaths.length });
+      };
       for (const path of sortedPaths) {
         currentPath = path;
         processed++;
@@ -6192,12 +6239,7 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
           continue;
         }
         if (!localFile && remoteItem) {
-          this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0B\u8F7D ${shortPath(path)}`);
-          const downloadedFile = await client.download(path);
-          const created = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
-          await this.setState(path, created, downloadedFile.item);
-          downloaded++;
-          this.addLog("INFO", `\u4E0B\u8F7D\uFF1A${path}`);
+          queueDownload(path, remoteItem);
           continue;
         }
         if (!localFile || !remoteItem) continue;
@@ -6215,12 +6257,7 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
             uploaded++;
             this.addLog("INFO", `\u4E0A\u4F20\uFF1A${path}`);
           } else {
-            this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0B\u8F7D ${shortPath(path)}`);
-            const downloadedFile = await client.download(path);
-            const updated = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
-            await this.setState(path, updated, downloadedFile.item);
-            downloaded++;
-            this.addLog("INFO", `\u4E0B\u8F7D\uFF1A${path}`);
+            queueDownload(path, remoteItem, localFile);
           }
           continue;
         }
@@ -6232,13 +6269,7 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
         const remoteChanged = previous.remoteSig !== remoteSig;
         if (!localChanged && !remoteChanged) continue;
         if (localChanged && remoteChanged) {
-          this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u5904\u7406\u51B2\u7A81 ${shortPath(path)}`);
-          await this.createConflictCopy(localFile);
-          const downloadedFile = await client.download(path);
-          const updated = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
-          await this.setState(path, updated, downloadedFile.item);
-          conflicts++;
-          this.addLog("WARN", `\u53CC\u5411\u51B2\u7A81\uFF0C\u5DF2\u4FDD\u7559\u672C\u5730\u526F\u672C\uFF1A${path}`);
+          queueDownload(path, remoteItem, localFile, true);
         } else if (localChanged) {
           this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0A\u4F20 ${shortPath(path)}`);
           const uploadedItem = await client.upload(path, await this.app.vault.readBinary(localFile));
@@ -6247,30 +6278,84 @@ var WebDavProxySyncPlugin = class extends import_obsidian.Plugin {
           uploaded++;
           this.addLog("INFO", `\u4E0A\u4F20\uFF1A${path}`);
         } else {
-          this.setStatus(`WebDAV\uFF1A${processed}/${sortedPaths.length} \xB7 \u4E0B\u8F7D ${shortPath(path)}`);
-          const downloadedFile = await client.download(path);
-          const updated = await this.writeRemoteFile(path, downloadedFile.data, downloadedFile.item.modified);
-          await this.setState(path, updated, downloadedFile.item);
-          downloaded++;
-          this.addLog("INFO", `\u4E0B\u8F7D\uFF1A${path}`);
+          queueDownload(path, remoteItem, localFile);
         }
       }
-      const summary = `\u4E0A\u4F20 ${uploaded}\uFF0C\u4E0B\u8F7D ${downloaded}\uFF0C\u51B2\u7A81 ${conflicts}`;
+      if (downloadJobs.length > 0) {
+        const concurrency = clampInteger(this.data.downloadConcurrency, 1, 8);
+        this.addLog("INFO", `\u5F85\u4E0B\u8F7D ${downloadJobs.length} \u4E2A\u6587\u4EF6\uFF0C\u5E76\u53D1\u6570 ${concurrency}\uFF0C\u5355\u6587\u4EF6\u6700\u591A\u91CD\u8BD5 ${this.data.downloadRetryCount} \u6B21`);
+        currentPath = "";
+        const result = await this.executeDownloadJobs(client, downloadJobs, concurrency);
+        downloaded += result.downloaded;
+        conflicts += result.conflicts;
+        failedDownloads += result.failed;
+      }
+      const summary = `\u4E0A\u4F20 ${uploaded}\uFF0C\u4E0B\u8F7D ${downloaded}\uFF0C\u51B2\u7A81 ${conflicts}\uFF0C\u4E0B\u8F7D\u5931\u8D25 ${failedDownloads}`;
       this.addLog("INFO", `\u540C\u6B65\u5B8C\u6210\uFF1A${summary}`);
       this.data.syncStateVersion = 2;
       this.needsStateMigration = false;
       await this.saveData(this.data);
       this.setStatus(`WebDAV\uFF1A${summary}`);
-      if (showNotice || uploaded + downloaded + conflicts > 0) new import_obsidian.Notice(`WebDAV \u540C\u6B65\u5B8C\u6210\uFF1A${summary}`);
+      if (showNotice || uploaded + downloaded + conflicts + failedDownloads > 0) new import_obsidian.Notice(`WebDAV \u540C\u6B65\u5B8C\u6210\uFF1A${summary}`);
     } catch (error) {
       const message = errorMessage(error);
-      const location = currentPath ? `\uFF0C\u5904\u7406\u6587\u4EF6\uFF1A${currentPath}` : "";
+      const location = currentPath ? `\uFF0C\u6700\u8FD1\u5904\u7406\uFF1A${currentPath}` : "";
       this.addLog("ERROR", `\u540C\u6B65\u5931\u8D25${location}\uFF1A${message}${errorStack(error)}`);
       await this.saveData(this.data);
       this.setStatus(`WebDAV\uFF1A\u540C\u6B65\u5931\u8D25 \xB7 ${message}`);
       new import_obsidian.Notice(`WebDAV \u540C\u6B65\u5931\u8D25\uFF1A${message}${location}\u3002\u53EF\u6253\u5F00\u201C\u67E5\u770B\u540C\u6B65\u65E5\u5FD7\u201D\u67E5\u770B\u8BE6\u60C5\u3002`, 12e3);
     } finally {
       this.syncing = false;
+    }
+  }
+  async executeDownloadJobs(client, jobs, concurrency) {
+    let downloaded = 0;
+    let conflicts = 0;
+    let failed = 0;
+    let consecutiveFailures = 0;
+    let consecutiveFailedPaths = [];
+    for (const job of jobs) await this.ensureLocalParent(job.path);
+    for (let offset = 0; offset < jobs.length; offset += concurrency) {
+      const batch = jobs.slice(offset, offset + concurrency);
+      const results = await Promise.all(batch.map((job) => this.executeDownloadJob(client, job)));
+      let shouldAbort = false;
+      for (const result of results) {
+        if (result.success) {
+          downloaded++;
+          if (result.conflict) conflicts++;
+          consecutiveFailures = 0;
+          consecutiveFailedPaths = [];
+        } else {
+          failed++;
+          consecutiveFailures++;
+          consecutiveFailedPaths.push(result.job.path);
+          const message = errorMessage(result.error);
+          this.addLog("ERROR", `\u4E0B\u8F7D\u6700\u7EC8\u5931\u8D25\uFF08\u5DF2\u91CD\u8BD5\uFF09\uFF1A${result.job.path}\uFF1A${message}${errorStack(result.error)}`);
+          if (consecutiveFailures >= 3) shouldAbort = true;
+        }
+      }
+      await this.saveData(this.data);
+      if (shouldAbort) {
+        throw new Error(`\u8FDE\u7EED ${consecutiveFailures} \u4E2A\u6587\u4EF6\u4E0B\u8F7D\u5931\u8D25\uFF0C\u5DF2\u4E2D\u65AD\u672C\u6B21\u540C\u6B65\uFF1A${consecutiveFailedPaths.join("\u3001")}\uFF1B\u672C\u8F6E\u5171\u6210\u529F ${downloaded} \u4E2A\u3001\u5931\u8D25 ${failed} \u4E2A`);
+      }
+    }
+    return { downloaded, conflicts, failed };
+  }
+  async executeDownloadJob(client, job) {
+    try {
+      this.setStatus(`WebDAV\uFF1A\u4E0B\u8F7D ${job.position}/${job.total} \xB7 ${shortPath(job.path)}`);
+      const downloadedFile = await client.download(job.path, job.remoteItem, (retryNumber, maxRetries, error) => {
+        this.addLog("WARN", `\u4E0B\u8F7D\u91CD\u8BD5 ${retryNumber}/${maxRetries}\uFF1A${job.path}\uFF1A${errorMessage(error)}`);
+        this.setStatus(`WebDAV\uFF1A\u91CD\u8BD5 ${retryNumber}/${maxRetries} \xB7 ${shortPath(job.path)}`);
+      });
+      if (job.conflict && job.localFile) await this.createConflictCopy(job.localFile);
+      const updated = await this.writeRemoteFile(job.path, downloadedFile.data, downloadedFile.item.modified);
+      await this.setState(job.path, updated, downloadedFile.item);
+      if (job.conflict) this.addLog("WARN", `\u53CC\u5411\u51B2\u7A81\uFF0C\u5DF2\u4FDD\u7559\u672C\u5730\u526F\u672C\uFF1A${job.path}`);
+      else this.addLog("INFO", `\u4E0B\u8F7D\uFF1A${job.path}`);
+      return { job, success: true, conflict: job.conflict };
+    } catch (error) {
+      return { job, success: false, conflict: false, error };
     }
   }
   async writeRemoteFile(path, data, modified) {
@@ -6357,7 +6442,7 @@ var SyncLogModal = class extends import_obsidian.Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "WebDAV \u540C\u6B65\u65E5\u5FD7" });
+    new import_obsidian.Setting(contentEl).setName("WebDAV \u540C\u6B65\u65E5\u5FD7").setHeading();
     const toolbar = contentEl.createDiv({ cls: "webdav-proxy-sync-log-toolbar" });
     const copyButton = toolbar.createEl("button", { text: "\u590D\u5236\u65E5\u5FD7" });
     copyButton.onclick = () => {
@@ -6425,6 +6510,18 @@ var WebDavProxySyncSettingTab = class extends import_obsidian.PluginSettingTab {
       this.plugin.data.requestTimeoutSeconds = Number.isFinite(parsed) && parsed >= 5 ? parsed : 60;
       await this.plugin.saveSettings();
     }));
+    new import_obsidian.Setting(containerEl).setName("\u5E76\u53D1\u4E0B\u8F7D\u6570").setDesc("\u540C\u65F6\u4E0B\u8F7D\u7684\u6587\u4EF6\u6570\uFF0C\u5EFA\u8BAE 3\u20136\uFF1B\u8FC7\u9AD8\u53EF\u80FD\u89E6\u53D1 WebDAV \u670D\u52A1\u9650\u6D41").addText((text) => text.setValue(String(this.plugin.data.downloadConcurrency)).onChange(async (value) => {
+      this.plugin.data.downloadConcurrency = clampInteger(Number.parseInt(value, 10), 1, 8);
+      await this.plugin.saveSettings();
+    }));
+    new import_obsidian.Setting(containerEl).setName("\u4E0B\u8F7D\u91CD\u8BD5\u6B21\u6570").setDesc("\u5355\u4E2A\u6587\u4EF6\u4E0B\u8F7D\u5931\u8D25\u540E\u7684\u91CD\u8BD5\u6B21\u6570\uFF1BHTTP 416\u3001\u8D85\u65F6\u548C\u670D\u52A1\u5668\u4E34\u65F6\u9519\u8BEF\u4F1A\u81EA\u52A8\u91CD\u8BD5").addText((text) => text.setValue(String(this.plugin.data.downloadRetryCount)).onChange(async (value) => {
+      this.plugin.data.downloadRetryCount = clampInteger(Number.parseInt(value, 10), 0, 10);
+      await this.plugin.saveSettings();
+    }));
+    new import_obsidian.Setting(containerEl).setName("\u91CD\u8BD5\u57FA\u7840\u95F4\u9694\uFF08\u79D2\uFF09").setDesc("\u6309\u6307\u6570\u9000\u907F\u7B49\u5F85\uFF0C\u4F8B\u5982\u8BBE\u7F6E 2 \u79D2\u65F6\u4F9D\u6B21\u7B49\u5F85 2\u30014\u30018 \u79D2").addText((text) => text.setValue(String(this.plugin.data.downloadRetryDelaySeconds)).onChange(async (value) => {
+      this.plugin.data.downloadRetryDelaySeconds = clampInteger(Number.parseInt(value, 10), 0, 60);
+      await this.plugin.saveSettings();
+    }));
     new import_obsidian.Setting(containerEl).setName("\u81EA\u52A8\u540C\u6B65\u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u5B9A\u65F6\u540C\u6B65").addText((text) => text.setValue(String(this.plugin.data.syncIntervalMinutes)).onChange(async (value) => {
       const parsed = Number.parseInt(value, 10);
       this.plugin.data.syncIntervalMinutes = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
@@ -6472,6 +6569,19 @@ function globMatches(path, pattern) {
     }
   }
   return new RegExp(`^${expression}$`).test(path);
+}
+function clampInteger(value, minimum, maximum) {
+  if (!Number.isFinite(value)) return minimum;
+  return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
+}
+function httpStatusFromError(error) {
+  const match = errorMessage(error).match(/HTTP\s+(\d{3})/i);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+function isRetriableDownloadError(error) {
+  const status = httpStatusFromError(error);
+  if (status === null) return true;
+  return status === 408 || status === 409 || status === 416 || status === 423 || status === 425 || status === 429 || status >= 500;
 }
 function basicAuth(username, password) {
   const bytes = new TextEncoder().encode(`${username}:${password}`);

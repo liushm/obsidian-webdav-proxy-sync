@@ -1,7 +1,7 @@
 {
   "id": "webdav-proxy-sync",
   "name": "WebDAV Proxy Sync",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "minAppVersion": "1.5.0",
   "description": "Cross-platform WebDAV sync with optional HTTP, HTTPS and SOCKS proxy support on desktop.",
   "author": "liushm",
